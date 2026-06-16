@@ -1,0 +1,40 @@
+{
+    "name": "componenta/websocket-server",
+    "description": "WebSocket server, protocol, socket, and connection primitives for Componenta",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.4",
+        "componenta/arrayable": "^1.0",
+        "componenta/config": "^1.0",
+        "componenta/http": "^1.0",
+        "psr/clock": "^1.0",
+        "psr/container": "^2.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Componenta\\WebSocket\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Componenta\\WebSocket\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "componenta": {
+            "config-providers": [
+                "Componenta\\WebSocket\\ConfigProvider"
+            ]
+        }
+    },
+    "require-dev": {
+        "pestphp/pest": "^4.3"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable"
+}
