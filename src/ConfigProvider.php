@@ -95,22 +95,6 @@ class ConfigProvider extends BaseConfigProvider
         ];
     }
 
-    protected function getAutowires(): array
-    {
-        return [
-            FrameCodec::class,
-            InMemoryConnectionRegistry::class,
-            MessageAssemblerFactory::class,
-            NullMessageRouter::class,
-            SafeWebSocketApplicationInvoker::class,
-            SelectEventLoop::class,
-            StreamSocketListenerFactory::class,
-            StreamSocketSelector::class,
-            WebSocketApplicationFactory::class,
-            WebSocketErrorContextFactory::class,
-        ];
-    }
-
     protected function getAliases(): array
     {
         return [
