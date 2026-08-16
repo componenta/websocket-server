@@ -4,8 +4,7 @@ declare(strict_types=1);
 
 function webSocketNamespaceRoot(): string
 {
-    return (string) getcwd() . DIRECTORY_SEPARATOR . 'src' . DIRECTORY_SEPARATOR . 'websocket-server'
-        . DIRECTORY_SEPARATOR . 'src';
+    return (string) getcwd() . DIRECTORY_SEPARATOR . 'src';
 }
 
 function webSocketNamespaceFromFile(string $file): string
@@ -85,8 +84,8 @@ describe('WebSocket namespace layout', function () {
     it('does not import app WebSocket internals in the server package', function () {
         $root = (string) getcwd();
         $paths = [
-            $root . DIRECTORY_SEPARATOR . 'src' . DIRECTORY_SEPARATOR . 'websocket-server' . DIRECTORY_SEPARATOR . 'src',
-            $root . DIRECTORY_SEPARATOR . 'src' . DIRECTORY_SEPARATOR . 'websocket-server' . DIRECTORY_SEPARATOR . 'tests',
+            $root . DIRECTORY_SEPARATOR . 'src',
+            $root . DIRECTORY_SEPARATOR . 'tests',
         ];
         $violations = [];
 
