@@ -19,13 +19,15 @@ use Componenta\WebSocket\Transport\WebSocketServerInterface;
 use Componenta\Config\ConfigKey;
 
 describe('WebSocket config provider', function () {
-    it('does not depend on the app integration layer', function () {
-        $provider = (string) file_get_contents(
-            getcwd() . DIRECTORY_SEPARATOR . 'src' . DIRECTORY_SEPARATOR . 'websocket-server'
-            . DIRECTORY_SEPARATOR . 'src' . DIRECTORY_SEPARATOR . 'ConfigProvider.php',
+    it('does not declare a dependency on the app integration package', function () {
+        $manifest = json_decode(
+            file_get_contents(dirname(__DIR__) . '/composer.json'),
+            true,
+            flags: JSON_THROW_ON_ERROR,
         );
 
-        expect($provider)->not->toContain('Componenta\\App\\');
+        expect($manifest['require'])->not->toHaveKey('componenta/app')
+            ->and($manifest['require'])->not->toHaveKey('componenta/websocket-app');
     });
 
     it('registers WebSocket contracts in the WebSocket provider', function () {

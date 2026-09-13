@@ -6,7 +6,7 @@
     "require": {
         "php": "^8.4",
         "componenta/arrayable": "^1.0",
-        "componenta/config": "^2.0.2",
+        "componenta/config": "^3.0.0",
         "componenta/http": "^1.0",
         "psr/clock": "^1.0",
         "psr/container": "^2.0"
@@ -26,6 +26,9 @@
             "config-providers": [
                 "Componenta\\WebSocket\\ConfigProvider"
             ]
+        },
+        "branch-alias": {
+            "dev-main": "1.1.x-dev"
         }
     },
     "require-dev": {
