@@ -184,4 +184,41 @@ describe('WebSocket frame codec', function () {
 
         $socket->close();
     });
+
+    it('matches the RFC 6455 masked Hello frame byte for byte', function () {
+        $codec = new FrameCodec();
+
+        $encoded = $codec->encode(new Frame(Opcode::TEXT, 'Hello'), true, hex2bin('37fa213d'));
+
+        expect(bin2hex($encoded))->toBe('818537fa213d7f9f4d5158');
+    });
+
+    it('preserves payload bytes for all mask and length boundaries', function (int $length) {
+        $codec = new FrameCodec();
+        $payload = substr(str_repeat("\x00\xff\x42\xab\x17", intdiv($length + 4, 5)), 0, $length);
+        $key = "\xff\x00\x7f\x1a";
+        $expectedMasked = '';
+        for ($i = 0; $i < $length; $i++) {
+            $expectedMasked .= $payload[$i] ^ $key[$i % 4];
+        }
+        $buffer = $codec->encode(new Frame(Opcode::BINARY, $payload), true, $key);
+
+        expect(substr($buffer, -$length ?: strlen($buffer)))->toBe($expectedMasked)
+            ->and($codec->decode($buffer)?->payload)->toBe($payload)
+            ->and($buffer)->toBe('');
+    })->with([0, 1, 3, 4, 5, 125, 126, 65535, 65536, 1048576]);
+
+    it('rejects a frame with the reserved most significant payload length bit set', function () {
+        $codec = new FrameCodec();
+        $buffer = "\x82\xff\x80\x00\x00\x00\x00\x00\x00\x00";
+        $code = null;
+
+        try {
+            $codec->decode($buffer);
+        } catch (ProtocolException $e) {
+            $code = $e->closeCode;
+        }
+
+        expect($code)->toBe(CloseCode::PROTOCOL_ERROR);
+    });
 });

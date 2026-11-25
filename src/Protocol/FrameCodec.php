@@ -32,7 +32,7 @@ final class FrameCodec implements FrameCodecInterface
         } elseif ($length <= 65_535) {
             $header = pack('CCn', $first, $maskBit | 126, $length);
         } else {
-            $header = pack('CCNN', $first, $maskBit | 127, 0, $length);
+            $header = pack('CCNN', $first, $maskBit | 127, intdiv($length, 4_294_967_296), $length & 0xffffffff);
         }
 
         if (!$masked) {
@@ -103,14 +103,18 @@ final class FrameCodec implements FrameCodecInterface
 
             $parts = unpack('Nhigh/Nlow', substr($buffer, $offset, 8));
 
-            if ($parts['high'] !== 0) {
+            if (($parts['high'] & 0x80000000) !== 0) {
+                throw new ProtocolException('WebSocket payload length has the reserved high bit set.');
+            }
+
+            if ($parts['high'] > intdiv(max(0, $maxPayloadSize), 4_294_967_296)) {
                 throw new ProtocolException(
                     'WebSocket payload is too large.',
                     CloseCode::PAYLOAD_TOO_LARGE,
                 );
             }
 
-            $payloadLength = $parts['low'];
+            $payloadLength = $parts['high'] * 4_294_967_296 + $parts['low'];
 
             if ($payloadLength < 65_536) {
                 throw new ProtocolException('WebSocket payload uses non-minimal length encoding.');
@@ -138,7 +142,7 @@ final class FrameCodec implements FrameCodecInterface
 
         $maskLength = $masked ? 4 : 0;
 
-        if ($bufferLength < $offset + $maskLength + $payloadLength) {
+        if ($bufferLength - $offset - $maskLength < $payloadLength) {
             return null;
         }
 
@@ -159,12 +163,6 @@ final class FrameCodec implements FrameCodecInterface
 
     private function mask(string $payload, string $maskKey): string
     {
-        $length = strlen($payload);
-
-        for ($i = 0; $i < $length; $i++) {
-            $payload[$i] = $payload[$i] ^ $maskKey[$i % 4];
-        }
-
-        return $payload;
+        return $payload ^ str_repeat($maskKey, intdiv(strlen($payload) + 3, 4));
     }
 }
