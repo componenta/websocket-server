@@ -1174,4 +1174,115 @@ describe('WebSocket server', function () {
             ->and($application->errors[0]->phase)->toBe(WebSocketErrorPhase::ACCEPT)
             ->and($good->written)->toContain('HTTP/1.1 101 Switching Protocols');
     });
+
+    it('delivers a message before a later close regardless of TCP read boundaries', function (bool $coalesced) {
+        $clock = new ServerBackpressureClock();
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, shutdownDrainTimeoutMs: 0, selectTimeoutUsec: 0);
+        $data = serverTestClientFrame(Opcode::TEXT, 'hello');
+        $close = serverTestClientFrame(Opcode::CLOSE, pack('n', CloseCode::NORMAL));
+        $reads = [new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake())];
+        foreach ($coalesced ? [$data . $close] : [$data, $close] as $bytes) {
+            $reads[] = new SocketReadResult(SocketReadStatus::DATA, $bytes);
+        }
+        $socket = new ServerScriptedSocket('client', '127.0.0.1:12345', $reads);
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server(
+            $options, new ServerBackpressureListenerFactory(new ServerQueueListener('listener', $socket)),
+            $loop, new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock,
+        );
+        $application = new class($server) implements WebSocketApplicationInterface {
+            public array $states = [];
+            public array $sent = [];
+            public array $errors = [];
+            public ?CloseInfo $close = null;
+            public function __construct(private WebSocketServerInterface $server) {}
+            public function connected(ConnectionInterface $connection): void {}
+            public function received(ConnectionInterface $connection, Message $message): void
+            {
+                $this->states[] = $connection->state;
+                $this->sent[] = $connection->send($message)->accepted;
+            }
+            public function disconnected(ConnectionInterface $connection, CloseInfo $close): void
+            {
+                $this->close = $close;
+                $this->server->stop();
+            }
+            public function failed(WebSocketErrorContextInterface $context): void
+            {
+                $this->errors[] = $context;
+            }
+        };
+        $loop->delay(100, fn () => $server->stop());
+
+        $server->run($application);
+
+        $wire = substr($socket->written, strpos($socket->written, "\r\n\r\n") + 4);
+        $codec = new FrameCodec();
+        $message = $codec->decode($wire, expectMasked: false);
+        $reply = $codec->decode($wire, expectMasked: false);
+
+        expect($application->states)->toBe([Componenta\WebSocket\Connection\ConnectionState::OPEN])
+            ->and($application->sent)->toBe([true])
+            ->and($application->errors)->toBe([])
+            ->and($application->close?->clean)->toBeTrue()
+            ->and($message?->opcode)->toBe(Opcode::TEXT)
+            ->and($message?->payload)->toBe('hello')
+            ->and($reply?->opcode)->toBe(Opcode::CLOSE)
+            ->and($wire)->toBe('');
+    })->with([
+        'coalesced' => [true],
+        'separate reads' => [false],
+    ]);
+
+    it('prevents error callbacks from replacing a protocol failure with an ordinary close', function () {
+        $clock = new ServerBackpressureClock();
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, shutdownDrainTimeoutMs: 0, selectTimeoutUsec: 0);
+        $socket = new ServerScriptedSocket('client', '127.0.0.1:12345', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'bad', masked: false)),
+        ]);
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server(
+            $options, new ServerBackpressureListenerFactory(new ServerQueueListener('listener', $socket)),
+            $loop, new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock,
+        );
+        $application = new class($server) implements WebSocketApplicationInterface {
+            public array $accepted = [];
+            public array $errors = [];
+            public ?CloseInfo $close = null;
+            public function __construct(private WebSocketServerInterface $server) {}
+            public function connected(ConnectionInterface $connection): void {}
+            public function received(ConnectionInterface $connection, Message $message): void {}
+            public function disconnected(ConnectionInterface $connection, CloseInfo $close): void
+            {
+                $this->close = $close;
+                $this->server->stop();
+            }
+            public function failed(WebSocketErrorContextInterface $context): void
+            {
+                $this->errors[] = $context;
+                if ($context->connection !== null) {
+                    $this->accepted[] = $context->connection->sendText('late')->accepted;
+                    $this->accepted[] = $context->connection->close()->accepted;
+                }
+            }
+        };
+        $loop->delay(100, fn () => $server->stop());
+
+        $server->run($application);
+
+        $wire = substr($socket->written, strpos($socket->written, "\r\n\r\n") + 4);
+        $reply = (new FrameCodec())->decode($wire, expectMasked: false);
+
+        expect($application->accepted)->toBe([false, false])
+            ->and($application->errors)->toHaveCount(1)
+            ->and($application->close?->code)->toBe(CloseCode::PROTOCOL_ERROR)
+            ->and($application->close?->clean)->toBeFalse()
+            ->and($reply?->opcode)->toBe(Opcode::CLOSE)
+            ->and(unpack('n', substr($reply->payload, 0, 2))[1])->toBe(CloseCode::PROTOCOL_ERROR)
+            ->and($wire)->toBe('');
+    });
+
 });
