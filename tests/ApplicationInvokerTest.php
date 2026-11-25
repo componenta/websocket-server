@@ -74,9 +74,10 @@ describe('WebSocket application invoker', function () {
         $connection = invokerTestConnection('invoker');
         $invoker = new SafeWebSocketApplicationInvoker(new WebSocketErrorContextFactory());
 
-        $invoker->received($application, $connection, new Message(Opcode::TEXT, 'hello'));
+        $completed = $invoker->received($application, $connection, new Message(Opcode::TEXT, 'hello'));
 
-        expect($application->reported)->toBeInstanceOf(WebSocketErrorContextInterface::class)
+        expect($completed)->toBeFalse()
+            ->and($application->reported)->toBeInstanceOf(WebSocketErrorContextInterface::class)
             ->and($application->reported?->phase)->toBe(WebSocketErrorPhase::APPLICATION)
             ->and($connection->closing)->toBeTrue();
 

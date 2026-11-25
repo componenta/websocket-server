@@ -281,6 +281,10 @@ final class Connection implements TransportConnectionInterface
             return SendResult::rejected('Outgoing WebSocket buffer is full.', $this->queuedBytes);
         }
 
+        if ($frame->opcode === Opcode::TEXT && !$this->isValidUtf8($frame->payload)) {
+            return SendResult::rejected('WebSocket text message payload must be valid UTF-8.', $this->queuedBytes);
+        }
+
         $encoded = $this->codec->encode($frame);
 
         if (!$this->needsWrite) {

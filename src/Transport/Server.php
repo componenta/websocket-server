@@ -763,7 +763,13 @@ final class Server implements WebSocketServerInterface
 
             $this->ensureWriteWatcher($accepted, $connections, $readWatchers, $writeWatchers, $application);
         });
-        $this->applications->connected($application, $accepted->application);
+        if (!$this->applications->connected($application, $accepted->application) && !$accepted->closing) {
+            $this->closeConnection(
+                $accepted, $connections, $readWatchers, $writeWatchers, $application,
+                CloseInfo::transport('Unable to queue application error close frame.'),
+            );
+            return;
+        }
         $this->flushOrWatchConnection($accepted, $connections, $readWatchers, $writeWatchers, $application);
     }
 
@@ -846,7 +852,7 @@ final class Server implements WebSocketServerInterface
             $result = $connection->close(CloseCode::INTERNAL_ERROR, 'Internal server error');
             $this->fail($application, WebSocketErrorPhase::READ, $connection, $e);
 
-            if (!$result->accepted && !$connection->needsWrite) {
+            if (!$result->accepted) {
                 $this->closeConnection(
                     $connection,
                     $connections,
@@ -868,9 +874,17 @@ final class Server implements WebSocketServerInterface
 
         foreach ($messages as $message) {
             $previousState = $connection->state;
-            $this->applications->received($application, $connection->application, $message);
+            $completed = $this->applications->received($application, $connection->application, $message);
 
-            if (!$this->running || $connection->state !== $previousState) {
+            if (!$completed && !$connection->closing) {
+                $this->closeConnection(
+                    $connection, $connections, $readWatchers, $writeWatchers, $application,
+                    CloseInfo::transport('Unable to queue application error close frame.'),
+                );
+                return;
+            }
+
+            if (!$completed || !$this->running || $connection->state !== $previousState) {
                 break;
             }
         }

@@ -1055,4 +1055,46 @@ describe('WebSocket server', function () {
             ->and($frame?->opcode)->toBe(Opcode::TEXT)
             ->and($frame?->payload)->toBe('relay');
     });
+
+    it('disconnects a failed application even when its close frame does not fit in the queue', function () {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(maxOutgoingBufferSize: 8, heartbeatIntervalMs: 0, closeHandshakeTimeoutMs: 2, selectTimeoutUsec: 0, shutdownDrainTimeoutMs: 0);
+        $socket = new ServerScriptedSocket('client', '127.0.0.1:10001', [
+            new SocketReadResult(SocketReadStatus::DATA, "GET /ws HTTP/1.1\r\nHost: example.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"),
+        ]);
+        $listener = new ServerQueueListener('listener', $socket);
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server($options, new ServerBackpressureListenerFactory($listener), $loop,
+            new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock);
+        $application = new class($server) implements WebSocketApplicationInterface {
+            public ?CloseInfo $close = null;
+            public array $errors = [];
+            public function __construct(private WebSocketServerInterface $server) {}
+            public function connected(ConnectionInterface $connection): void
+            {
+                $connection->sendText('123456');
+                throw new RuntimeException('application failed');
+            }
+            public function received(ConnectionInterface $connection, Message $message): void {}
+            public function disconnected(ConnectionInterface $connection, CloseInfo $close): void
+            {
+                $this->close = $close;
+                $this->server->stop();
+            }
+            public function failed(WebSocketErrorContextInterface $context): void
+            {
+                $this->errors[] = $context;
+            }
+        };
+        $loop->delay(100, fn () => $server->stop());
+
+        $server->run($application);
+
+        expect($application->close?->code)->toBe(CloseCode::ABNORMAL)
+            ->and($application->close?->clean)->toBeFalse()
+            ->and($application->errors)->toHaveCount(1)
+            ->and($application->errors[0]->phase)->toBe(WebSocketErrorPhase::APPLICATION)
+            ->and($socket->closed)->toBeTrue();
+    });
 });

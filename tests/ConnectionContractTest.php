@@ -347,4 +347,19 @@ describe('WebSocket connection contract', function () {
             ->and($connection->closeInfo?->clean)->toBeFalse();
         $connection->socket->close();
     });
+
+    it('rejects invalid UTF-8 text without queuing bytes and accepts binary bytes', function () {
+        $connection = contractTestConnection();
+
+        $text = $connection->application->sendText("\xc3\x28");
+        $message = $connection->application->send(new Message(Opcode::TEXT, "\xc3\x28"));
+        $binary = $connection->application->sendBinary("\xc3\x28");
+
+        expect($text->accepted)->toBeFalse()
+            ->and($text->queuedBytes)->toBe(0)
+            ->and($message->accepted)->toBeFalse()
+            ->and($message->queuedBytes)->toBe(0)
+            ->and($binary->accepted)->toBeTrue();
+        $connection->socket->close();
+    });
 });

@@ -18,16 +18,18 @@ final readonly class SafeWebSocketApplicationInvoker implements WebSocketApplica
         private WebSocketErrorContextFactoryInterface $errors,
     ) {}
 
-    public function connected(WebSocketApplicationInterface $application, ConnectionInterface $connection): void
+    public function connected(WebSocketApplicationInterface $application, ConnectionInterface $connection): bool
     {
         try {
             $application->connected($connection);
+            return true;
         } catch (\Throwable $e) {
             $connection->close(CloseCode::INTERNAL_ERROR, 'Internal server error');
             $this->failed(
                 $application,
                 $this->errors->create(WebSocketErrorPhase::APPLICATION, $connection, $e),
             );
+            return false;
         }
     }
 
@@ -35,15 +37,17 @@ final readonly class SafeWebSocketApplicationInvoker implements WebSocketApplica
         WebSocketApplicationInterface $application,
         ConnectionInterface $connection,
         Message $message,
-    ): void {
+    ): bool {
         try {
             $application->received($connection, $message);
+            return true;
         } catch (\Throwable $e) {
             $connection->close(CloseCode::INTERNAL_ERROR, 'Internal server error');
             $this->failed(
                 $application,
                 $this->errors->create(WebSocketErrorPhase::APPLICATION, $connection, $e),
             );
+            return false;
         }
     }
 
