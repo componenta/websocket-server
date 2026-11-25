@@ -1335,4 +1335,93 @@ describe('WebSocket server', function () {
             ->and($b->closed)->toBeTrue();
     });
 
+
+    it('isolates write watcher registration failure to the target connection', function () {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, shutdownDrainTimeoutMs: 0, selectTimeoutUsec: 0);
+        $codec = new FrameCodec();
+        $a = new ServerScriptedSocket('a', '127.0.0.1:10001', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'relay')),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'still open')),
+        ]);
+        $b = new ServerScriptedSocket('b', '127.0.0.1:10002', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+        ]);
+        $loop = new class(new SelectEventLoop(new ServerQueueSelector(), $clock, 0)) implements \Componenta\WebSocket\Loop\EventLoopInterface {
+            public function __construct(private readonly SelectEventLoop $delegate) {}
+            public function onReadable(SocketInterface|SocketListenerInterface $socket, callable $callback): \Componenta\WebSocket\Loop\LoopWatcherInterface
+            {
+                return $this->delegate->onReadable($socket, $callback);
+            }
+            public function onWritable(SocketInterface $socket, callable $callback): \Componenta\WebSocket\Loop\LoopWatcherInterface
+            {
+                if ($socket->id === 'b') {
+                    throw new RuntimeException('Unable to register B writer.');
+                }
+                return $this->delegate->onWritable($socket, $callback);
+            }
+            public function delay(int $milliseconds, callable $callback): \Componenta\WebSocket\Loop\LoopTimerInterface
+            {
+                return $this->delegate->delay($milliseconds, $callback);
+            }
+            public function defer(callable $callback): void
+            {
+                $this->delegate->defer($callback);
+            }
+            public function run(): void
+            {
+                $this->delegate->run();
+            }
+            public function stop(): void
+            {
+                $this->delegate->stop();
+            }
+        };
+        $server = new Server(
+            $options, new ServerBackpressureListenerFactory(new ServerQueueListener('listener', $a, $b)),
+            $loop, new Handshake($options), new ConnectionFactory($codec, $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock,
+        );
+        $application = new class implements WebSocketApplicationInterface {
+            public array $connections = [];
+            public array $messages = [];
+            public array $errors = [];
+            public array $closes = [];
+            public ?bool $accepted = null;
+            public function connected(ConnectionInterface $connection): void
+            {
+                $this->connections[$connection->remoteAddress] = $connection;
+            }
+            public function received(ConnectionInterface $connection, Message $message): void
+            {
+                $this->messages[] = $message->payload;
+                if ($message->payload === 'relay') {
+                    $this->accepted = $this->connections['127.0.0.1:10002']->sendText('payload')->accepted;
+                }
+            }
+            public function disconnected(ConnectionInterface $connection, CloseInfo $close): void
+            {
+                $this->closes[$connection->remoteAddress] = $close;
+            }
+            public function failed(WebSocketErrorContextInterface $context): void
+            {
+                $this->errors[] = $context;
+            }
+        };
+        $loop->delay(100, fn () => $server->stop());
+
+        $server->run($application);
+
+        expect($application->messages)->toBe(['relay', 'still open'])
+            ->and($application->accepted)->toBeFalse()
+            ->and($application->errors)->toHaveCount(1)
+            ->and($application->errors[0]->phase)->toBe(WebSocketErrorPhase::WRITE)
+            ->and($application->errors[0]->connection?->remoteAddress)->toBe('127.0.0.1:10002')
+            ->and($application->closes['127.0.0.1:10002']->code)->toBe(CloseCode::ABNORMAL)
+            ->and($application->closes['127.0.0.1:10001']->code)->toBe(CloseCode::GOING_AWAY)
+            ->and($a->closed)->toBeTrue()
+            ->and($b->closed)->toBeTrue();
+    });
+
 });
