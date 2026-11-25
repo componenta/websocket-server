@@ -98,4 +98,40 @@ describe('WebSocket application invoker', function () {
 
         $connection->socket->close();
     });
+
+    it('reports the original application exception even when scheduling its close fails', function () {
+        $application = new class implements WebSocketApplicationInterface {
+            public array $errors = [];
+            public function connected(ConnectionInterface $connection): void {}
+            public function received(ConnectionInterface $connection, Message $message): void
+            {
+                throw new RuntimeException('original application error');
+            }
+            public function disconnected(ConnectionInterface $connection, CloseInfo $close): void {}
+            public function failed(WebSocketErrorContextInterface $context): void
+            {
+                $this->errors[] = $context;
+            }
+        };
+        $connection = invokerTestConnection('failed-close');
+        $connection->setWriteNotifier(static function (): void {
+            throw new RuntimeException('write registration failed');
+        });
+        $invoker = new SafeWebSocketApplicationInvoker(new WebSocketErrorContextFactory());
+
+        try {
+            $completed = $invoker->received($application, $connection->application, new Message(Opcode::TEXT, 'hello'));
+
+            expect($completed)->toBeFalse()
+                ->and($application->errors)->toHaveCount(2)
+                ->and($application->errors[0]->phase)->toBe(WebSocketErrorPhase::APPLICATION)
+                ->and($application->errors[0]->error->getMessage())->toBe('original application error')
+                ->and($application->errors[1]->phase)->toBe(WebSocketErrorPhase::WRITE)
+                ->and($application->errors[1]->error->getMessage())->toBe('write registration failed');
+        } finally {
+            $connection->markClosed();
+            $connection->socket->close();
+        }
+    });
+
 });
