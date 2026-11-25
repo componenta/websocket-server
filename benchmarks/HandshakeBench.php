@@ -8,6 +8,7 @@ use Componenta\WebSocket\Config\WebSocketOptions;
 use Componenta\WebSocket\Protocol\Handshake\Handshake;
 use PhpBench\Attributes as Bench;
 
+#[Bench\Groups(['comparative'])]
 #[Bench\BeforeMethods('setUp')]
 #[Bench\Revs(5_000)]
 final class HandshakeBench

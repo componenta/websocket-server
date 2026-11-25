@@ -9,6 +9,7 @@ use Componenta\WebSocket\Protocol\MessageAssembler;
 use Componenta\WebSocket\Protocol\Opcode;
 use PhpBench\Attributes as Bench;
 
+#[Bench\Groups(['comparative'])]
 #[Bench\BeforeMethods('setUp')]
 final class MessageAssemblerBench
 {

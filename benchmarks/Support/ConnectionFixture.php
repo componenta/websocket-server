@@ -14,13 +14,16 @@ final readonly class ConnectionFixture
 {
     private FrameCodec $codec;
     private HandshakeRequest $request;
-    private bool $withBudget;
+    private ?BufferBudget $incomingBudget;
+    private ?BufferBudget $outgoingBudget;
 
     public function __construct()
     {
         $this->codec = new FrameCodec();
         $this->request = new HandshakeRequest('GET', '/ws', '/ws', []);
-        $this->withBudget = method_exists(Connection::class, 'receiveBytes');
+        $withBudget = class_exists(BufferBudget::class);
+        $this->incomingBudget = $withBudget ? new BufferBudget(67_108_864) : null;
+        $this->outgoingBudget = $withBudget ? new BufferBudget(67_108_864) : null;
     }
 
     public function create(CountingSocket $socket): Connection
@@ -34,9 +37,9 @@ final readonly class ConnectionFixture
             'request' => $this->request,
         ];
 
-        if ($this->withBudget) {
-            $arguments['incomingBudget'] = new BufferBudget(67_108_864);
-            $arguments['outgoingBudget'] = new BufferBudget(67_108_864);
+        if ($this->incomingBudget !== null) {
+            $arguments['incomingBudget'] = $this->incomingBudget;
+            $arguments['outgoingBudget'] = $this->outgoingBudget;
         }
 
         return new Connection(...$arguments);

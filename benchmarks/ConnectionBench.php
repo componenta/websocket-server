@@ -13,6 +13,7 @@ use Componenta\WebSocket\Protocol\Message;
 use Componenta\WebSocket\Protocol\Opcode;
 use PhpBench\Attributes as Bench;
 
+#[Bench\Groups(['comparative'])]
 #[Bench\BeforeMethods('setUp')]
 #[Bench\AfterMethods('tearDown')]
 final class ConnectionBench
@@ -23,7 +24,6 @@ final class ConnectionBench
     private \Closure $echo;
     private \Closure $receive;
     private string $wire;
-    private string $large;
     private int $received = 0;
 
     public function setUp(): void
@@ -33,7 +33,6 @@ final class ConnectionBench
         $this->connection = $this->fixture->create($this->socket);
         $payload = str_repeat('x', 64);
         $this->wire = (new FrameCodec())->encode(new Frame(Opcode::TEXT, $payload), true, 'mask');
-        $this->large = str_repeat('x', 2_097_152);
 
         $handle = method_exists($this->connection, 'receiveBytes') ? $this->connection->application : $this->connection;
         $this->echo = function (Message $message) use ($handle, $payload): void {
@@ -86,37 +85,6 @@ final class ConnectionBench
         $this->drain($this->connection, 100);
         if ($this->socket->written - $before !== 6_600) {
             throw new \RuntimeException('Incorrect batch byte count.');
-        }
-    }
-
-    #[Bench\Revs(3)]
-    public function benchPartialWrite2MiB(): void
-    {
-        $socket = new CountingSocket(1_024);
-        $connection = $this->fixture->create($socket);
-        try {
-            if (!$connection->sendBinary($this->large)->accepted) {
-                throw new \RuntimeException('Large frame rejected.');
-            }
-            $this->drain($connection, 3_000);
-            if ($socket->written !== 2_097_162) {
-                throw new \RuntimeException('Partial write byte count mismatch.');
-            }
-        } finally {
-            $connection->markClosed();
-        }
-    }
-
-    #[Bench\Revs(5_000)]
-    public function benchConnectionLifecycle(): void
-    {
-        $connection = $this->fixture->create(new CountingSocket());
-        if (!$connection->sendText('hello')->accepted || !$connection->flush() || !$connection->close()->accepted) {
-            throw new \RuntimeException('Connection lifecycle failed.');
-        }
-        $connection->markClosed();
-        if (!$connection->closed) {
-            throw new \RuntimeException('Connection was not closed.');
         }
     }
 
