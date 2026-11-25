@@ -147,4 +147,63 @@ describe('WebSocket event loop', function () {
 
         expect($events)->toBe(['listener']);
     });
+
+    it('does not dispatch due timers after a deferred callback stops the loop', function () {
+        $loop = new SelectEventLoop(new EventLoopTestSelector(), new EventLoopTestClock());
+        $events = [];
+
+        $loop->delay(1, function () use (&$events): void {
+            $events[] = 'timer';
+        });
+        $loop->defer(function () use (&$events, $loop): void {
+            $events[] = 'stop';
+            $loop->stop();
+        });
+
+        $loop->run();
+
+        expect($events)->toBe(['stop']);
+    });
+
+    it('polls without waiting when a callback defers more work', function () {
+        $selector = new class implements SocketSelectorInterface {
+            public array $timeouts = [];
+
+            public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection
+            {
+                $this->timeouts[] = $timeoutUsec;
+                return new SocketSelection([], [], []);
+            }
+        };
+        $loop = new SelectEventLoop($selector, new EventLoopTestClock(), 200000);
+        $events = [];
+        $loop->onReadable(new EventLoopTestSocket('read'), static function (): void {});
+        $loop->defer(function () use ($loop, &$events): void {
+            $events[] = 'first';
+            $loop->defer(function () use ($loop, &$events): void {
+                $events[] = 'second';
+                $loop->stop();
+            });
+        });
+
+        $loop->run();
+
+        expect($events)->toBe(['first', 'second'])
+            ->and($selector->timeouts)->toBe([0]);
+    });
+
+    it('rejects nested runs and remains reusable after a callback throws', function () {
+        $loop = new SelectEventLoop(new EventLoopTestSelector(), new EventLoopTestClock());
+        $loop->defer(fn () => $loop->run());
+
+        expect(fn () => $loop->run())->toThrow(LogicException::class);
+
+        $ran = false;
+        $loop->defer(function () use (&$ran): void {
+            $ran = true;
+        });
+        $loop->run();
+
+        expect($ran)->toBeTrue();
+    });
 });

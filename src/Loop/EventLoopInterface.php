@@ -17,6 +17,7 @@ interface EventLoopInterface
 
     public function defer(callable $callback): void;
 
+    /** Run until stopped or no work remains. Nested runs are not supported. */
     public function run(): void;
 
     public function stop(): void;

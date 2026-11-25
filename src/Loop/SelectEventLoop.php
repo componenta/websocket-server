@@ -37,6 +37,7 @@ final class SelectEventLoop implements EventLoopInterface
     private array $deferred = [];
 
     private bool $running = false;
+    private bool $executing = false;
     private int $nextId = 1;
 
     public function __construct(
@@ -113,31 +114,46 @@ final class SelectEventLoop implements EventLoopInterface
 
     public function run(): void
     {
+        if ($this->executing) {
+            throw new \LogicException('Event loop is already running.');
+        }
+
+        $this->executing = true;
         $this->running = true;
 
-        while ($this->running) {
-            $this->runDeferred();
-            $this->runDueTimers();
+        try {
+            while ($this->running) {
+                $this->runDeferred();
+                if (!$this->running) {
+                    break;
+                }
 
-            if (!$this->hasWork()) {
-                break;
+                $this->runDueTimers();
+                if (!$this->running || !$this->hasWork()) {
+                    break;
+                }
+
+                $timeoutUsec = $this->nextTimeoutUsec();
+
+                if ($this->listenerTargets === [] && $this->readTargets === [] && $this->writeTargets === []) {
+                    if ($timeoutUsec > 0) {
+                        usleep($timeoutUsec);
+                    }
+                    continue;
+                }
+
+                $selection = $this->selector->select(
+                    $this->listenerTargets,
+                    $this->readTargets,
+                    $this->writeTargets,
+                    $timeoutUsec,
+                );
+
+                $this->dispatchSelection($selection);
             }
-
-            $timeoutUsec = $this->nextTimeoutUsec();
-
-            if ($this->listenerTargets === [] && $this->readTargets === [] && $this->writeTargets === []) {
-                usleep($timeoutUsec);
-                continue;
-            }
-
-            $selection = $this->selector->select(
-                $this->listenerTargets,
-                $this->readTargets,
-                $this->writeTargets,
-                $timeoutUsec,
-            );
-
-            $this->dispatchSelection($selection);
+        } finally {
+            $this->running = false;
+            $this->executing = false;
         }
     }
 
@@ -156,8 +172,14 @@ final class SelectEventLoop implements EventLoopInterface
         $callbacks = $this->deferred;
         $this->deferred = [];
 
-        foreach ($callbacks as $callback) {
-            $callback();
+        foreach ($callbacks as $index => $callback) {
+            try {
+                $callback();
+            } finally {
+                if (!$this->running) {
+                    $this->deferred = array_merge(array_slice($callbacks, $index + 1), $this->deferred);
+                }
+            }
 
             if (!$this->running) {
                 break;
@@ -194,6 +216,10 @@ final class SelectEventLoop implements EventLoopInterface
 
     private function nextTimeoutUsec(): int
     {
+        if ($this->deferred !== []) {
+            return 0;
+        }
+
         if ($this->timers === []) {
             return $this->idleTimeoutUsec;
         }
