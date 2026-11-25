@@ -264,4 +264,24 @@ describe('Stream socket lifecycle', function () {
         }
     });
 
+
+    it('returns null for an empty accept queue even with a warning-to-exception handler', function () {
+        $resource = stream_socket_server('tcp://127.0.0.1:0');
+        expect($resource)->not->toBeFalse();
+        $listener = new Componenta\WebSocket\Socket\StreamSocketListener($resource);
+        $handler = static function (int $level, string $message): never {
+            throw new ErrorException($message, 0, $level);
+        };
+
+        set_error_handler($handler, E_WARNING | E_USER_WARNING);
+        try {
+            expect($listener->accept())->toBeNull();
+            expect(fn () => trigger_error('caller warning handler', E_USER_WARNING))
+                ->toThrow(ErrorException::class, 'caller warning handler');
+        } finally {
+            restore_error_handler();
+            $listener->close();
+        }
+    });
+
 });
