@@ -10,21 +10,22 @@ use Componenta\WebSocket\Socket\SocketWriteStatus;
 final class PendingConnection implements PendingConnectionInterface
 {
     public private(set) string $buffer = '';
-    private string $outgoingBuffer = '';
-    private int $outgoingOffset = 0;
+    private readonly OutgoingBuffer $outgoingBuffer;
 
     public bool $ready {
         get => str_contains($this->buffer, "\r\n\r\n");
     }
 
     public bool $needsWrite {
-        get => strlen($this->outgoingBuffer) > $this->outgoingOffset;
+        get => $this->outgoingBuffer->size > 0;
     }
 
     public function __construct(
         public private(set) readonly SocketInterface $socket,
         private readonly float $acceptedAtMs,
-    ) {}
+    ) {
+        $this->outgoingBuffer = new OutgoingBuffer();
+    }
 
     public function append(string $bytes): void
     {
@@ -33,15 +34,7 @@ final class PendingConnection implements PendingConnectionInterface
 
     public function queueResponse(string $bytes): void
     {
-        if (!$this->needsWrite) {
-            $this->outgoingBuffer = $bytes;
-            $this->outgoingOffset = 0;
-
-            return;
-        }
-
-        $this->compactOutgoingBuffer();
-        $this->outgoingBuffer .= $bytes;
+        $this->outgoingBuffer->append($bytes);
     }
 
     public function flush(): bool
@@ -50,18 +43,13 @@ final class PendingConnection implements PendingConnectionInterface
             return true;
         }
 
-        $written = $this->socket->write($this->pendingOutgoingBytes());
-
+        $written = $this->socket->write($this->outgoingBuffer->front());
         if ($written->status === SocketWriteStatus::ERROR) {
             return false;
         }
 
-        if ($written->writtenBytes > 0) {
-            $this->outgoingOffset += min($written->writtenBytes, strlen($this->outgoingBuffer) - $this->outgoingOffset);
-
-            if (!$this->needsWrite) {
-                $this->resetOutgoingBuffer();
-            }
+        if ($written->status === SocketWriteStatus::WRITTEN) {
+            $this->outgoingBuffer->consume($written->writtenBytes);
         }
 
         return true;
@@ -77,26 +65,4 @@ final class PendingConnection implements PendingConnectionInterface
         return $nowMs - $this->acceptedAtMs >= $timeoutMs;
     }
 
-    private function pendingOutgoingBytes(): string
-    {
-        return $this->outgoingOffset === 0
-            ? $this->outgoingBuffer
-            : substr($this->outgoingBuffer, $this->outgoingOffset);
-    }
-
-    private function compactOutgoingBuffer(): void
-    {
-        if ($this->outgoingOffset === 0) {
-            return;
-        }
-
-        $this->outgoingBuffer = substr($this->outgoingBuffer, $this->outgoingOffset);
-        $this->outgoingOffset = 0;
-    }
-
-    private function resetOutgoingBuffer(): void
-    {
-        $this->outgoingBuffer = '';
-        $this->outgoingOffset = 0;
-    }
 }

@@ -20,8 +20,7 @@ use Componenta\WebSocket\Socket\SocketWriteStatus;
 final class Connection implements TransportConnectionInterface
 {
     private string $buffer = '';
-    private string $outgoingBuffer = '';
-    private int $outgoingOffset = 0;
+    private readonly OutgoingBuffer $outgoingBuffer;
     private ?\Closure $writeNotifier = null;
     private ?ConnectionInterface $applicationHandle = null;
     private bool $peerCloseReceived = false;
@@ -54,7 +53,7 @@ final class Connection implements TransportConnectionInterface
     }
 
     public int $queuedBytes {
-        get => strlen($this->outgoingBuffer) - $this->outgoingOffset;
+        get => $this->outgoingBuffer->size;
     }
 
     public bool $closing {
@@ -74,7 +73,9 @@ final class Connection implements TransportConnectionInterface
         private(set) readonly HandshakeRequest $request,
         public ConnectionContextInterface $context = new ConnectionContext(),
         private readonly int              $maxOutgoingBufferSize = 4_194_304,
-    ) {}
+    ) {
+        $this->outgoingBuffer = new OutgoingBuffer();
+    }
 
     public string $remoteAddress {
         get => $this->socket->remoteAddress;
@@ -173,20 +174,16 @@ final class Connection implements TransportConnectionInterface
             return true;
         }
 
-        $written = $this->socket->write($this->pendingOutgoingBytes());
+        $bytes = $this->outgoingBuffer->front();
+        $written = $this->socket->write($bytes);
 
         if ($written->status === SocketWriteStatus::ERROR) {
             return false;
         }
 
-        if ($written->writtenBytes > 0) {
-            $bytes = min($written->writtenBytes, $this->queuedBytes);
-            $this->outgoingOffset += $bytes;
-            $this->pendingPingBytes = max(0, $this->pendingPingBytes - $bytes);
-
-            if (!$this->needsWrite) {
-                $this->resetOutgoingBuffer();
-            }
+        if ($written->status === SocketWriteStatus::WRITTEN) {
+            $this->outgoingBuffer->consume($written->writtenBytes);
+            $this->pendingPingBytes = max(0, $this->pendingPingBytes - $written->writtenBytes);
         }
 
         return true;
@@ -225,7 +222,7 @@ final class Connection implements TransportConnectionInterface
         $this->pendingPingPayload = null;
         $this->pendingPingBytes = 0;
         $this->buffer = '';
-        $this->resetOutgoingBuffer();
+        $this->outgoingBuffer->clear();
         $this->assembler->reset();
     }
 
@@ -316,43 +313,13 @@ final class Connection implements TransportConnectionInterface
 
         $encoded = $this->codec->encode($frame);
 
-        if (!$this->needsWrite) {
-            $this->outgoingBuffer = $encoded;
-            $this->outgoingOffset = 0;
-            if ($notify) {
-                $this->notifyWrite();
-            }
-
-            return SendResult::accepted($queuedBytes);
+        $wasEmpty = !$this->needsWrite;
+        $this->outgoingBuffer->append($encoded);
+        if ($wasEmpty && $notify) {
+            $this->notifyWrite();
         }
-
-        $this->compactOutgoingBuffer();
-        $this->outgoingBuffer .= $encoded;
 
         return SendResult::accepted($queuedBytes);
-    }
-
-    private function pendingOutgoingBytes(): string
-    {
-        return $this->outgoingOffset === 0
-            ? $this->outgoingBuffer
-            : substr($this->outgoingBuffer, $this->outgoingOffset);
-    }
-
-    private function compactOutgoingBuffer(): void
-    {
-        if ($this->outgoingOffset === 0) {
-            return;
-        }
-
-        $this->outgoingBuffer = substr($this->outgoingBuffer, $this->outgoingOffset);
-        $this->outgoingOffset = 0;
-    }
-
-    private function resetOutgoingBuffer(): void
-    {
-        $this->outgoingBuffer = '';
-        $this->outgoingOffset = 0;
     }
 
     private function parseCloseInfo(string $payload): CloseInfo

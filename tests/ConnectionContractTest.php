@@ -387,4 +387,30 @@ describe('WebSocket connection contract', function () {
             ->and($connection->pingSent)->toBeFalse();
         $connection->socket->close();
     });
+
+    it('preserves wire order while appending during partial writes across large chunks', function () {
+        $socket = new ConnectionPartialWriteSocket('partial-write', '127.0.0.1:12345',
+            new SocketWriteResult(SocketWriteStatus::WRITTEN, 1),
+            new SocketWriteResult(SocketWriteStatus::BLOCKED),
+            new SocketWriteResult(SocketWriteStatus::WRITTEN, 10),
+        );
+        $codec = new FrameCodec();
+        $connection = new Connection($socket, $codec, new MessageAssembler(200000), 200000, 'chunked',
+            new HandshakeRequest('GET', '/ws', '/ws', []));
+        $first = str_repeat('a', 140000);
+        $second = "b\x00c";
+        $connection->sendBinary($first);
+        $connection->flush();
+        $connection->sendBinary($second);
+
+        for ($attempt = 0; $connection->needsWrite && $attempt < 20; $attempt++) {
+            expect($connection->flush())->toBeTrue();
+        }
+
+        expect($connection->queuedBytes)->toBe(0)
+            ->and($socket->written)->toBe(
+                $codec->encode(new Frame(Opcode::BINARY, $first))
+                . $codec->encode(new Frame(Opcode::BINARY, $second)),
+            );
+    });
 });
