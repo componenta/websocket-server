@@ -2,6 +2,11 @@ name: Comparative performance
 
 on:
   workflow_dispatch:
+    inputs:
+      checkpoint:
+        description: 'Additional recent commit to compare hot paths against (full SHA)'
+        required: false
+        default: 'a7cd9c69a2fbc7ee7197153de8a0c3b09f0da429'
   push:
     paths:
       - 'src/**'
@@ -35,9 +40,13 @@ jobs:
           coverage: none
           tools: composer:v2
       - name: Install shared dependencies
+        env:
+          CHECKPOINT: ${{ github.event_name == 'workflow_dispatch' && inputs.checkpoint || 'a7cd9c69a2fbc7ee7197153de8a0c3b09f0da429' }}
         run: |
           set -euo pipefail
           git worktree add --detach "$RUNNER_TEMP/baseline" 2e547491d07bd0840dd0bff674b35c145fd0acc6
+          [[ "$CHECKPOINT" =~ ^[0-9a-f]{40}$ ]]
+          git worktree add --detach "$RUNNER_TEMP/checkpoint" "$CHECKPOINT"
           composer install --no-interaction --prefer-dist
       - name: Run PHPBench baseline and current revision
         shell: bash
@@ -50,6 +59,12 @@ jobs:
           export WEBSOCKET_BENCH_SOURCE="$PWD/src"
           php -r 'require "benchmarks/bootstrap.php"; echo (new ReflectionClass(Componenta\WebSocket\Protocol\FrameCodec::class))->getFileName(), PHP_EOL;'
           vendor/bin/phpbench run --group=comparative --tag=head --ref=baseline --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/comparison.txt"
+          # Compare only the hot paths affected by the latest optimization work.
+          filter='ConnectionLifecycleBench|ConnectionBench|HandshakeBench'
+          export WEBSOCKET_BENCH_SOURCE="$RUNNER_TEMP/checkpoint/src"
+          vendor/bin/phpbench run --group=comparative --filter="$filter" --tag=checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/checkpoint.txt"
+          export WEBSOCKET_BENCH_SOURCE="$PWD/src"
+          vendor/bin/phpbench run --group=comparative --filter="$filter" --tag=checkpoint_head --ref=checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/checkpoint-comparison.txt"
           vendor/bin/phpbench run --group=runtime --tag=runtime --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/runtime.txt"
           vendor/bin/phpbench run --group=network --tag=network --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/network.txt"
           cp -r .phpbench/storage "$RUNNER_TEMP/performance/storage"
