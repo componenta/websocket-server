@@ -24,7 +24,7 @@ final readonly class Handshake implements HandshakeInterface
         }
 
         if ($request->method !== 'GET') {
-            return $this->reject(405, 'Method Not Allowed', $request);
+            return $this->reject(405, 'Method Not Allowed', $request, ['Allow' => 'GET']);
         }
 
         if ($request->path !== $this->options->path) {
@@ -41,6 +41,8 @@ final readonly class Handshake implements HandshakeInterface
 
         if (($request->header(Header::SEC_WEBSOCKET_VERSION) ?? '') !== '13') {
             return $this->reject(426, 'Upgrade Required', $request, [
+                Header::CONNECTION => 'Upgrade, close',
+                Header::UPGRADE => 'websocket',
                 Header::SEC_WEBSOCKET_VERSION => '13',
             ]);
         }

@@ -7,7 +7,7 @@ namespace Componenta\WebSocket\Connection;
 use Componenta\Arrayable\Arrayable;
 
 /**
- * @extends Arrayable<string, mixed>
+ * @extends Arrayable<int|string, mixed>
  */
 interface ConnectionContextInterface extends Arrayable
 {
@@ -20,7 +20,10 @@ interface ConnectionContextInterface extends Arrayable
     public function without(string $key): self;
 
     /**
-     * @return array<string, mixed>
+     * PHP converts canonical numeric-string keys to integer array keys.
+     * Values are not deep-cloned.
+     *
+     * @return array<int|string, mixed>
      */
     public function toArray(): array;
 }

@@ -6,12 +6,22 @@ namespace Componenta\WebSocket\Connection;
 
 final readonly class ConnectionContext implements ConnectionContextInterface
 {
+    /** @var array<int|string, mixed> */
+    private array $attributes;
+
     /**
-     * @param array<string, mixed> $attributes
+     * @param array<int|string, mixed> $attributes
      */
-    public function __construct(
-        private array $attributes = [],
-    ) {}
+    public function __construct(array $attributes = [])
+    {
+        // Copy entries by value to detach direct PHP references. Values such as
+        // objects retain their identity; this is not a deep clone.
+        $snapshot = [];
+        foreach ($attributes as $key => $value) {
+            $snapshot[$key] = $value;
+        }
+        $this->attributes = $snapshot;
+    }
 
     public function has(string $key): bool
     {
@@ -25,7 +35,10 @@ final readonly class ConnectionContext implements ConnectionContextInterface
 
     public function with(string $key, mixed $value): ConnectionContextInterface
     {
-        return new self([...$this->attributes, $key => $value]);
+        $attributes = $this->attributes;
+        $attributes[$key] = $value;
+
+        return new self($attributes);
     }
 
     public function without(string $key): ConnectionContextInterface
@@ -37,7 +50,7 @@ final readonly class ConnectionContext implements ConnectionContextInterface
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array<int|string, mixed>
      */
     public function toArray(): array
     {

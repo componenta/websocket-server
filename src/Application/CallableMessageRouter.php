@@ -9,12 +9,13 @@ use Componenta\WebSocket\Protocol\Message;
 
 final readonly class CallableMessageRouter implements MessageRouterInterface
 {
-    /**
-     * @param callable(ConnectionInterface, Message): void $router
-     */
-    public function __construct(
-        private mixed $router,
-    ) {}
+    private \Closure $router;
+
+    /** @param callable(ConnectionInterface, Message): void $router */
+    public function __construct(callable $router)
+    {
+        $this->router = \Closure::fromCallable($router);
+    }
 
     public function route(ConnectionInterface $connection, Message $message): void
     {
