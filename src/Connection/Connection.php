@@ -135,7 +135,7 @@ final class Connection implements TransportConnectionInterface
         $this->syncIncomingReservation();
         $this->notifyWrite();
 
-        return $result;
+        return $this->closed ? SendResult::rejected('Connection closed while scheduling write.', $this->queuedBytes) : $result;
     }
 
     /** @param \Closure(Message): void $onMessage */
@@ -197,7 +197,9 @@ final class Connection implements TransportConnectionInterface
             $this->notifyWrite();
         }
 
-        return $result;
+        return $this->closed && $result->accepted
+            ? SendResult::rejected('Connection closed while scheduling write.', $this->queuedBytes)
+            : $result;
     }
 
     public function flush(): bool
@@ -388,12 +390,14 @@ final class Connection implements TransportConnectionInterface
             throw $error;
         }
 
-        $queuedBytes = $this->queuedBytes;
         if ($wasEmpty && $notify) {
             $this->notifyWrite();
+            if ($this->closed) {
+                return SendResult::rejected('Connection closed while scheduling write.', $this->queuedBytes);
+            }
         }
 
-        return SendResult::accepted($queuedBytes);
+        return SendResult::accepted($this->queuedBytes);
     }
 
     private function parseCloseInfo(string $payload): CloseInfo

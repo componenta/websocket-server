@@ -15,7 +15,10 @@ interface TransportConnectionInterface extends ConnectionInterface
     /** Stable restricted connection handle passed to application callbacks. */
     public ConnectionInterface $application { get; }
 
-    /** Notify the runtime when an outgoing queue becomes nonempty or closing begins. */
+    /**
+     * Notify the runtime when an outgoing queue becomes nonempty or closing begins.
+     * The runtime may close this connection synchronously when registration fails.
+     */
     public function setWriteNotifier(?\Closure $notifier): void;
 
     public bool $needsWrite { get; }

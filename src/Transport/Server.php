@@ -236,6 +236,9 @@ final class Server implements WebSocketServerInterface
             return;
         }
 
+        if (!$state->hasActive($session)) {
+            return;
+        }
         $session->announce();
         if (!$this->applications->connected($state->application, $connection->application) && !$connection->closing) {
             $this->closeConnection($state, $session, CloseInfo::transport('Unable to queue application error close frame.'));
@@ -355,16 +358,27 @@ final class Server implements WebSocketServerInterface
         }
 
         $connection = $session->connection;
-        if ($connection->closing) {
-            $session->clearHeartbeat();
-            $session->watchers->schedule($this->loop, $this->options->closeHandshakeTimeoutMs,
-                fn () => $this->closeConnection($state, $session,
-                    $connection->closeInfo ?? CloseInfo::transport('WebSocket close handshake timed out.')));
-        }
+        try {
+            if ($connection->closing) {
+                $session->clearHeartbeat();
+                $session->watchers->schedule($this->loop, $this->options->closeHandshakeTimeoutMs,
+                    fn () => $this->closeConnection($state, $session,
+                        $connection->closeInfo ?? CloseInfo::transport('WebSocket close handshake timed out.')));
+            }
 
-        if ($connection->needsWrite) {
-            $session->watchers->watchWrite($this->loop, $connection->socket,
-                fn () => $this->flushConnection($state, $session));
+            if ($connection->needsWrite) {
+                $session->watchers->watchWrite($this->loop, $connection->socket,
+                    fn () => $this->flushConnection($state, $session));
+            }
+        } catch (\Throwable $error) {
+            // The write belongs to the target session, not the application
+            // callback (possibly running for a different connection).
+            $this->closeConnection(
+                $state,
+                $session,
+                CloseInfo::transport('Unable to register WebSocket write.'),
+                $error,
+            );
         }
     }
 
@@ -487,8 +501,12 @@ final class Server implements WebSocketServerInterface
         $this->closeSocket($state, $session->connection->socket);
     }
 
-    private function closeConnection(ServerRunState $state, ActiveSession $session, CloseInfo $close): void
-    {
+    private function closeConnection(
+        ServerRunState $state,
+        ActiveSession $session,
+        CloseInfo $close,
+        ?\Throwable $writeRegistrationFailure = null,
+    ): void {
         if (!$state->removeActive($session)) {
             return;
         }
@@ -507,6 +525,14 @@ final class Server implements WebSocketServerInterface
         }
 
         $this->closeSocket($state, $connection->socket, $connection);
+
+        if ($writeRegistrationFailure !== null) {
+            try {
+                $this->fail($state, WebSocketErrorPhase::WRITE, $connection, $writeRegistrationFailure);
+            } catch (\Throwable $error) {
+                $this->cleanupFailure($state, $connection, $error);
+            }
+        }
 
         if ($session->announced) {
             try {
