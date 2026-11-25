@@ -46,4 +46,21 @@ describe('Stream socket lifecycle', function () {
             fclose($resources[1]);
         }
     });
+
+    it('does not accept connections or throw after a stream listener is closed', function () {
+        $resource = stream_socket_server('tcp://127.0.0.1:0');
+        expect($resource)->not->toBeFalse();
+        $listener = new Componenta\WebSocket\Socket\StreamSocketListener($resource);
+        $id = $listener->id;
+
+        try {
+            $listener->close();
+            $listener->close();
+            expect($listener->id)->toBe($id)
+                ->and($listener->accept())->toBeNull();
+        } finally {
+            $listener->close();
+        }
+    });
+
 });

@@ -207,4 +207,68 @@ describe('WebSocket event loop', function () {
 
         expect($ran)->toBeTrue();
     });
+
+    it('releases callback state when cancelled watcher and timer handles are retained', function () {
+        $loop = new SelectEventLoop(new EventLoopTestSelector(), new EventLoopTestClock());
+        $watcherState = new stdClass();
+        $timerState = new stdClass();
+        $watcherReference = WeakReference::create($watcherState);
+        $timerReference = WeakReference::create($timerState);
+        $watcher = $loop->onReadable(new EventLoopTestSocket('read'), static function () use ($watcherState): void {});
+        $timer = $loop->delay(100, static function () use ($timerState): void {});
+        unset($watcherState, $timerState);
+
+        expect($watcherReference->get())->not->toBeNull()
+            ->and($timerReference->get())->not->toBeNull();
+
+        $watcher->cancel();
+        $timer->cancel();
+        gc_collect_cycles();
+
+        expect($watcher->enabled)->toBeFalse()
+            ->and($timer->enabled)->toBeFalse()
+            ->and($watcherReference->get())->toBeNull()
+            ->and($timerReference->get())->toBeNull();
+    });
+
+    it('releases callback state and disables a one-shot timer before invoking the callback', function () {
+        $loop = new SelectEventLoop(new EventLoopTestSelector(), new EventLoopTestClock(), 0);
+        $state = new stdClass();
+        $reference = WeakReference::create($state);
+        $timer = null;
+        $enabledDuringCallback = null;
+        $timer = $loop->delay(1, static function () use ($state, &$timer, &$enabledDuringCallback): void {
+            $enabledDuringCallback = $timer->enabled;
+        });
+        unset($state);
+
+        $loop->run();
+        gc_collect_cycles();
+
+        expect($enabledDuringCallback)->toBeFalse()
+            ->and($timer->enabled)->toBeFalse()
+            ->and($reference->get())->toBeNull();
+    });
+
+    it('preserves not-yet-invoked deferred callbacks when an earlier callback throws', function () {
+        $loop = new SelectEventLoop(new EventLoopTestSelector(), new EventLoopTestClock(), 0);
+        $events = [];
+        $loop->defer(static function () use ($loop, &$events): void {
+            $loop->defer(static function () use (&$events): void {
+                $events[] = 'new';
+            });
+            throw new RuntimeException('deferred failure');
+        });
+        $loop->defer(static function () use (&$events): void {
+            $events[] = 'pending';
+        });
+
+        expect(fn () => $loop->run())->toThrow(RuntimeException::class, 'deferred failure')
+            ->and($events)->toBe([]);
+
+        $loop->run();
+
+        expect($events)->toBe(['pending', 'new']);
+    });
+
 });
