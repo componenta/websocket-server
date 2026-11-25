@@ -44,4 +44,6 @@ interface WebSocketOptionsInterface
     public int $backlog { get; }
 
     public int $closeHandshakeTimeoutMs { get; }
+
+    public int $maxTotalOutgoingBufferSize { get; }
 }

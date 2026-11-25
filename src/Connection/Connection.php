@@ -72,7 +72,8 @@ final class Connection implements TransportConnectionInterface
         private(set) readonly string $id,
         private(set) readonly HandshakeRequest $request,
         public ConnectionContextInterface $context = new ConnectionContext(),
-        private readonly int              $maxOutgoingBufferSize = 4_194_304,
+        private readonly int $maxOutgoingBufferSize = 4_194_304,
+        private readonly ?OutgoingBudget $outgoingBudget = null,
     ) {
         $this->outgoingBuffer = new OutgoingBuffer();
     }
@@ -183,6 +184,7 @@ final class Connection implements TransportConnectionInterface
 
         if ($written->status === SocketWriteStatus::WRITTEN) {
             $this->outgoingBuffer->consume($written->writtenBytes);
+            $this->outgoingBudget?->release($written->writtenBytes);
             $this->pendingPingBytes = max(0, $this->pendingPingBytes - $written->writtenBytes);
         }
 
@@ -222,6 +224,7 @@ final class Connection implements TransportConnectionInterface
         $this->pendingPingPayload = null;
         $this->pendingPingBytes = 0;
         $this->buffer = '';
+        $this->outgoingBudget?->release($this->queuedBytes);
         $this->outgoingBuffer->clear();
         $this->assembler->reset();
     }
@@ -301,9 +304,11 @@ final class Connection implements TransportConnectionInterface
         }
 
         $encodedBytes = $this->codec->encodedSize($frame);
-        $queuedBytes = $this->queuedBytes + $encodedBytes;
+        if ($encodedBytes < 0) {
+            throw new \LogicException('Frame codec reported a negative encoded size.');
+        }
 
-        if ($queuedBytes > $this->maxOutgoingBufferSize) {
+        if ($encodedBytes > $this->maxOutgoingBufferSize - $this->queuedBytes) {
             return SendResult::rejected('Outgoing WebSocket buffer is full.', $this->queuedBytes);
         }
 
@@ -311,10 +316,23 @@ final class Connection implements TransportConnectionInterface
             return SendResult::rejected('WebSocket text message payload must be valid UTF-8.', $this->queuedBytes);
         }
 
-        $encoded = $this->codec->encode($frame);
+        if ($this->outgoingBudget !== null && !$this->outgoingBudget->reserve($encodedBytes)) {
+            return SendResult::rejected('Server outgoing WebSocket budget is full.', $this->queuedBytes);
+        }
 
-        $wasEmpty = !$this->needsWrite;
-        $this->outgoingBuffer->append($encoded);
+        try {
+            $encoded = $this->codec->encode($frame);
+            if (strlen($encoded) !== $encodedBytes) {
+                throw new \LogicException('Frame codec encoded size does not match its reported size.');
+            }
+            $wasEmpty = !$this->needsWrite;
+            $this->outgoingBuffer->append($encoded);
+        } catch (\Throwable $error) {
+            $this->outgoingBudget?->release($encodedBytes);
+            throw $error;
+        }
+
+        $queuedBytes = $this->queuedBytes;
         if ($wasEmpty && $notify) {
             $this->notifyWrite();
         }

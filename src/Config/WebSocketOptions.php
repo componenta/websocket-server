@@ -33,6 +33,7 @@ final readonly class WebSocketOptions implements WebSocketOptionsInterface
         public int $selectTimeoutUsec = 200_000,
         public int $backlog = 128,
         public int $closeHandshakeTimeoutMs = 5_000,
+        public int $maxTotalOutgoingBufferSize = 67_108_864,
     ) {
         foreach ($this->allowedOrigins as $origin) {
             if (!is_string($origin) || $origin === '' || trim($origin) !== $origin) {
@@ -58,6 +59,10 @@ final readonly class WebSocketOptions implements WebSocketOptionsInterface
 
         if ($this->maxOutgoingBufferSize < 1) {
             throw new \InvalidArgumentException('WebSocket max outgoing buffer size must be positive.');
+        }
+
+        if ($this->maxTotalOutgoingBufferSize < 1) {
+            throw new \InvalidArgumentException('WebSocket total outgoing buffer size must be positive.');
         }
 
         if ($this->maxPendingHandshakeBytes < 1) {
@@ -126,6 +131,7 @@ final readonly class WebSocketOptions implements WebSocketOptionsInterface
             selectTimeoutUsec: $config->int(ConfigKey::SELECT_TIMEOUT_USEC, 200_000),
             backlog: $config->int(ConfigKey::BACKLOG, 128),
             closeHandshakeTimeoutMs: $config->int(ConfigKey::CLOSE_HANDSHAKE_TIMEOUT_MS, 5_000),
+            maxTotalOutgoingBufferSize: $config->int(ConfigKey::MAX_TOTAL_OUTGOING_BUFFER_SIZE, 67_108_864),
         );
     }
 

@@ -14,6 +14,7 @@ final class ConfigKey
     public const string ALLOWED_ORIGINS = 'componenta.websocket.allowed_origins';
     public const string MAX_FRAME_PAYLOAD_SIZE = 'componenta.websocket.max_frame_payload_size';
     public const string MAX_MESSAGE_PAYLOAD_SIZE = 'componenta.websocket.max_message_payload_size';
+    public const string MAX_TOTAL_OUTGOING_BUFFER_SIZE = 'componenta.websocket.max_total_outgoing_buffer_size';
     public const string MAX_OUTGOING_BUFFER_SIZE = 'componenta.websocket.max_outgoing_buffer_size';
     public const string MAX_PENDING_HANDSHAKE_BYTES = 'componenta.websocket.max_pending_handshake_bytes';
     public const string PENDING_HANDSHAKE_TIMEOUT_MS = 'componenta.websocket.pending_handshake_timeout_ms';

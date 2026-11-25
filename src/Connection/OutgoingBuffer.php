@@ -33,7 +33,8 @@ final class OutgoingBuffer
             if ($available > 0) {
                 $take = min($available, $length);
                 $this->chunks->pop();
-                $this->chunks->enqueue($tail . substr($bytes, 0, $take));
+                $tail .= substr($bytes, 0, $take);
+                $this->chunks->enqueue($tail);
                 $cursor = $take;
             }
         }
@@ -58,7 +59,8 @@ final class OutgoingBuffer
 
     public function consume(int $bytes): void
     {
-        if ($bytes < 0 || $bytes > strlen($this->front())) {
+        $available = $this->chunks->isEmpty() ? 0 : strlen($this->chunks->bottom()) - $this->offset;
+        if ($bytes < 0 || $bytes > $available) {
             throw new \LogicException('Socket reported an invalid number of written bytes.');
         }
         if ($bytes === 0) {

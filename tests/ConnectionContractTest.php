@@ -413,4 +413,30 @@ describe('WebSocket connection contract', function () {
                 . $codec->encode(new Frame(Opcode::BINARY, $second)),
             );
     });
+
+    it('shares the outgoing byte limit and releases reservations on partial writes and close', function () {
+        $budget = new Componenta\WebSocket\Connection\OutgoingBudget(12);
+        $socket = new ConnectionPartialWriteSocket('a', '127.0.0.1:12345',
+            new SocketWriteResult(SocketWriteStatus::WRITTEN, 2));
+        $request = new HandshakeRequest('GET', '/ws', '/ws', []);
+        $a = new Connection($socket, new FrameCodec(), new MessageAssembler(1024), 1024, 'a', $request,
+            outgoingBudget: $budget);
+        $b = new Connection(new ConnectionPartialWriteSocket('b'), new FrameCodec(), new MessageAssembler(1024), 1024, 'b', $request,
+            outgoingBudget: $budget);
+
+        expect($a->sendText('1234')->accepted)->toBeTrue()
+            ->and($b->sendText('5678')->accepted)->toBeTrue()
+            ->and($b->sendText('')->accepted)->toBeFalse();
+
+        $a->flush();
+
+        expect($b->sendText('')->accepted)->toBeTrue()
+            ->and($b->sendText('')->accepted)->toBeFalse();
+
+        $a->markClosed();
+
+        expect($b->sendText('xx')->accepted)->toBeTrue()
+            ->and($b->sendText('')->accepted)->toBeFalse();
+        $b->markClosed();
+    });
 });

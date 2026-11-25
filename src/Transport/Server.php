@@ -14,6 +14,7 @@ use Componenta\WebSocket\Config\WebSocketOptionsInterface;
 use Componenta\WebSocket\Connection\Connection;
 use Componenta\WebSocket\Connection\ConnectionFactoryInterface;
 use Componenta\WebSocket\Connection\ConnectionInterface;
+use Componenta\WebSocket\Connection\OutgoingBudget;
 use Componenta\WebSocket\Connection\PendingConnectionFactoryInterface;
 use Componenta\WebSocket\Connection\PendingConnectionInterface;
 use Componenta\WebSocket\Connection\TransportConnectionInterface;
@@ -36,6 +37,7 @@ use Componenta\WebSocket\Socket\SocketWriteStatus;
 final class Server implements WebSocketServerInterface
 {
     private bool $running = false;
+    private ?OutgoingBudget $outgoingBudget = null;
 
     /** @var array<int|string, float> */
     private array $lastActivityAt = [];
@@ -78,6 +80,7 @@ final class Server implements WebSocketServerInterface
         $this->awaitingPongSince = [];
         $this->queuedPingSince = [];
         $this->closeTimers = [];
+        $this->outgoingBudget = new OutgoingBudget($this->options->maxTotalOutgoingBufferSize);
         $this->running = true;
 
         try {
@@ -136,6 +139,7 @@ final class Server implements WebSocketServerInterface
                 }
             }
 
+            $this->outgoingBudget = null;
             $this->lastActivityAt = [];
             $this->awaitingPongSince = [];
             $this->queuedPingSince = [];
@@ -732,6 +736,7 @@ final class Server implements WebSocketServerInterface
                 socket: $connection->socket,
                 id: bin2hex(random_bytes(8)),
                 request: $response->request,
+                outgoingBudget: $this->outgoingBudget,
             );
         } catch (\Throwable $e) {
             $this->removePending(
