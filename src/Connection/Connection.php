@@ -25,6 +25,7 @@ final class Connection implements TransportConnectionInterface
     private ?ConnectionInterface $applicationHandle = null;
     private bool $peerCloseReceived = false;
     private bool $protocolFailed = false;
+    private bool $receiving = false;
     private ?string $pendingPingPayload = null;
     private int $pendingPingBytes = 0;
 
@@ -103,6 +104,15 @@ final class Connection implements TransportConnectionInterface
 
     public function close(int $code = CloseCode::NORMAL, string $reason = ''): SendResult
     {
+        if ($this->protocolFailed || $this->peerCloseReceived) {
+            return SendResult::rejected('Connection is closing.', $this->queuedBytes);
+        }
+
+        return $this->beginClose($code, $reason);
+    }
+
+    private function beginClose(int $code, string $reason): SendResult
+    {
         if ($this->state !== ConnectionState::OPEN) {
             return SendResult::rejected('Connection is not open.', $this->queuedBytes);
         }
@@ -120,33 +130,37 @@ final class Connection implements TransportConnectionInterface
         return $result;
     }
 
-    /**
-     * @return list<Message>
-     */
-    public function appendBytes(string $bytes): array
+    /** @param \Closure(Message): void $onMessage */
+    public function receiveBytes(string $bytes, \Closure $onMessage): void
     {
+        if ($this->receiving) {
+            throw new \LogicException('WebSocket receive is already in progress.');
+        }
+
         if ($this->closed || $this->peerCloseReceived || $this->protocolFailed) {
-            return [];
+            return;
         }
 
-        $this->buffer .= $bytes;
-        $messages = [];
+        $this->receiving = true;
+        try {
+            $this->buffer .= $bytes;
 
-        while (($frame = $this->codec->decode($this->buffer, true, $this->maxPayloadSize)) !== null) {
-            $message = $this->handleFrame($frame);
+            while (!$this->closed && !$this->peerCloseReceived && !$this->protocolFailed
+                && ($frame = $this->codec->decode($this->buffer, true, $this->maxPayloadSize)) !== null
+            ) {
+                $message = $this->handleFrame($frame);
+                if ($message !== null) {
+                    $onMessage($message);
+                }
 
-            if ($message !== null) {
-                $messages[] = $message;
+                if ($this->peerCloseReceived) {
+                    $this->buffer = '';
+                    $this->assembler->reset();
+                }
             }
-
-            if ($this->peerCloseReceived) {
-                $this->buffer = '';
-                $this->assembler->reset();
-                break;
-            }
+        } finally {
+            $this->receiving = false;
         }
-
-        return $messages;
     }
 
     public function ping(string $payload = ''): SendResult
@@ -206,7 +220,7 @@ final class Connection implements TransportConnectionInterface
         $this->buffer = '';
         $this->assembler->reset();
 
-        return $this->close($code, $reason);
+        return $this->beginClose($code, $reason);
     }
 
     public function markClosed(?CloseInfo $close = null): void
@@ -297,8 +311,9 @@ final class Connection implements TransportConnectionInterface
             return SendResult::rejected('Connection is closed.', $this->queuedBytes);
         }
 
-        if ($this->state === ConnectionState::CLOSING && $frame->opcode !== Opcode::CLOSE
-            && !($frame->opcode === Opcode::PONG && !$this->peerCloseReceived)
+        if ($frame->opcode !== Opcode::CLOSE
+            && ($this->protocolFailed || $this->peerCloseReceived
+                || ($this->state === ConnectionState::CLOSING && $frame->opcode !== Opcode::PONG))
         ) {
             return SendResult::rejected('Connection is closing.', $this->queuedBytes);
         }

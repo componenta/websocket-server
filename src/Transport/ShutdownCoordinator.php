@@ -6,6 +6,7 @@ namespace Componenta\WebSocket\Transport;
 
 use Componenta\WebSocket\Loop\MonotonicClockInterface;
 use Componenta\WebSocket\Protocol\CloseInfo;
+use Componenta\WebSocket\Protocol\Message;
 use Componenta\WebSocket\Socket\SocketReadStatus;
 
 /** @internal Drains nonblocking close handshakes within a shared shutdown deadline. */
@@ -52,7 +53,7 @@ final readonly class ShutdownCoordinator
                     if (!$connection->readyToClose) {
                         $read = $connection->socket->read(8192);
                         if ($read->status === SocketReadStatus::DATA) {
-                            $connection->appendBytes($read->bytes);
+                            $connection->receiveBytes($read->bytes, static function (Message $message): void {});
                             $progress = true;
                         } elseif ($read->status === SocketReadStatus::ERROR || $read->status === SocketReadStatus::CLOSED) {
                             $close($session, CloseInfo::transport($read->reason ?? 'Socket closed during shutdown.'));

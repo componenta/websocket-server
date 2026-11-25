@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Componenta\WebSocket\Protocol\CloseCode;
 use Componenta\WebSocket\Connection\Connection;
+use Componenta\WebSocket\Tests\Support\ReceivedMessages;
 use Componenta\WebSocket\Exception\ProtocolException;
 use Componenta\WebSocket\Protocol\Frame;
 use Componenta\WebSocket\Protocol\FrameCodec;
@@ -76,7 +77,7 @@ describe('WebSocket frame codec', function () {
         $bytes = $codec->encode(new Frame(Opcode::TEXT, 'hel', final: false), masked: true, maskKey: 'mask')
             . $codec->encode(new Frame(Opcode::CONTINUATION, 'lo'), masked: true, maskKey: 'key!');
 
-        $messages = $connection->appendBytes($bytes);
+        $messages = ReceivedMessages::collect($connection, $bytes);
 
         expect($messages)->toHaveCount(1)
             ->and($messages[0]->opcode)->toBe(Opcode::TEXT)
@@ -99,7 +100,7 @@ describe('WebSocket frame codec', function () {
         $bytes = $codec->encode(new Frame(Opcode::TEXT, 'abc', final: false), masked: true, maskKey: 'mask')
             . $codec->encode(new Frame(Opcode::CONTINUATION, 'def'), masked: true, maskKey: 'key!');
 
-        expect(fn() => $connection->appendBytes($bytes))->toThrow(ProtocolException::class);
+        expect(fn() => ReceivedMessages::collect($connection, $bytes))->toThrow(ProtocolException::class);
 
         $socket->close();
     });
@@ -117,7 +118,7 @@ describe('WebSocket frame codec', function () {
         );
         $bytes = $codec->encode(new Frame(Opcode::CLOSE, "\x03"), masked: true, maskKey: 'mask');
 
-        expect(fn() => $connection->appendBytes($bytes))->toThrow(ProtocolException::class);
+        expect(fn() => ReceivedMessages::collect($connection, $bytes))->toThrow(ProtocolException::class);
 
         $socket->close();
     });
@@ -135,7 +136,7 @@ describe('WebSocket frame codec', function () {
         );
         $bytes = $codec->encode(new Frame(Opcode::CLOSE, pack('n', 1006)), masked: true, maskKey: 'mask');
 
-        expect(fn() => $connection->appendBytes($bytes))->toThrow(ProtocolException::class);
+        expect(fn() => ReceivedMessages::collect($connection, $bytes))->toThrow(ProtocolException::class);
 
         $socket->close();
     });
@@ -153,7 +154,7 @@ describe('WebSocket frame codec', function () {
         );
         $bytes = $codec->encode(new Frame(Opcode::CLOSE, pack('n', 1000) . "\xC3\x28"), masked: true, maskKey: 'mask');
 
-        expect(fn() => $connection->appendBytes($bytes))->toThrow(ProtocolException::class);
+        expect(fn() => ReceivedMessages::collect($connection, $bytes))->toThrow(ProtocolException::class);
 
         $socket->close();
     });
@@ -174,7 +175,7 @@ describe('WebSocket frame codec', function () {
         $error = null;
 
         try {
-            $connection->appendBytes($bytes);
+            ReceivedMessages::collect($connection, $bytes);
         } catch (ProtocolException $e) {
             $error = $e;
         }

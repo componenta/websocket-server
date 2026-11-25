@@ -130,7 +130,7 @@ Custom runtime adapters need to implement the following contracts:
 | Contract | Migration |
 |---|---|
 | `MonotonicClockInterface` | Implement `nowMilliseconds(): float` as an elapsed-time source, not wall-clock time. The default uses `hrtime()`; a PSR-20 clock is no longer required. |
-| `TransportConnectionInterface` | Provide the stable restricted `application` handle, `setWriteNotifier()`, `readyToClose`, `failProtocol()`, `awaitingPong` and `pingSent`. Notify the runtime when the queue becomes nonempty or closing begins. |
+| `TransportConnectionInterface` | Provide the stable restricted `application` handle, `setWriteNotifier()`, `readyToClose`, `failProtocol()`, `awaitingPong` and `pingSent`. Replace `appendBytes()` with `receiveBytes(string $bytes, Closure $onMessage): void`; dispatch messages synchronously in wire order before processing later frames. Notify the runtime when the queue becomes nonempty or closing begins. |
 | `PendingConnectionInterface` | Use `append(string $bytes)` and `expired(float $nowMs, int $timeoutMs)`; the former activity timestamps and redundant remote address are no longer exposed. |
 | `ConnectionFactoryInterface` | Accept the optional shared `OutgoingBudget` and enforce reservations for queued wire bytes until written or discarded. |
 | `WebSocketApplicationInvokerInterface` | Return a boolean from `connected()` and `received()` to indicate callback completion; false indicates reported failure. |

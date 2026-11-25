@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Componenta\WebSocket\Protocol\CloseCode;
 use Componenta\WebSocket\Protocol\CloseInitiator;
 use Componenta\WebSocket\Connection\Connection;
+use Componenta\WebSocket\Tests\Support\ReceivedMessages;
 use Componenta\WebSocket\Connection\ConnectionContext;
 use Componenta\WebSocket\Connection\ConnectionState;
 use Componenta\WebSocket\Protocol\FrameCodec;
@@ -214,7 +215,7 @@ describe('WebSocket connection contract', function () {
         $pong = $codec->encode(new Componenta\WebSocket\Protocol\Frame(Opcode::PONG), masked: true, maskKey: 'mask');
 
         $ping = $connection->ping();
-        $messages = $connection->appendBytes($pong);
+        $messages = ReceivedMessages::collect($connection, $pong);
 
         expect($ping->accepted)->toBeTrue()
             ->and($connection->queuedBytes)->toBe(2)
@@ -249,7 +250,7 @@ describe('WebSocket connection contract', function () {
         );
         $bytes = $codec->encode(new Componenta\WebSocket\Protocol\Frame(Opcode::CLOSE, pack('n', CloseCode::NORMAL)), masked: true, maskKey: 'mask');
 
-        expect(fn() => $connection->appendBytes($bytes))->toThrow(RuntimeException::class)
+        expect(fn() => ReceivedMessages::collect($connection, $bytes))->toThrow(RuntimeException::class)
             ->and($connection->state)->toBe(ConnectionState::OPEN)
             ->and($connection->closeInfo?->initiator)->toBe(CloseInitiator::TRANSPORT);
 
@@ -302,7 +303,7 @@ describe('WebSocket connection contract', function () {
         expect($connection->readyToClose)->toBeFalse()
             ->and($connection->closeInfo?->clean)->toBeFalse();
 
-        $connection->appendBytes($codec->encode(new Frame(Opcode::CLOSE, pack('n', 1000)), true, 'mask'));
+        ReceivedMessages::collect($connection, $codec->encode(new Frame(Opcode::CLOSE, pack('n', 1000)), true, 'mask'));
 
         expect($connection->readyToClose)->toBeTrue();
         $connection->markClosed();
@@ -317,7 +318,7 @@ describe('WebSocket connection contract', function () {
             . $codec->encode(new Frame(Opcode::CLOSE, pack('n', 1000)), true, 'mask')
             . $codec->encode(new Frame(Opcode::TEXT, 'after'), true, 'mask');
 
-        $messages = $connection->appendBytes($bytes);
+        $messages = ReceivedMessages::collect($connection, $bytes);
 
         expect(array_map(static fn (Message $message) => $message->payload, $messages))->toBe(['before'])
             ->and($connection->readyToClose)->toBeFalse();
@@ -332,7 +333,7 @@ describe('WebSocket connection contract', function () {
         $connection->flush();
         $bytes = (new FrameCodec())->encode(new Frame(Opcode::CLOSE, "\x01"), true, 'mask');
 
-        expect(fn () => $connection->appendBytes($bytes))->toThrow(Componenta\WebSocket\Exception\ProtocolException::class)
+        expect(fn () => ReceivedMessages::collect($connection, $bytes))->toThrow(Componenta\WebSocket\Exception\ProtocolException::class)
             ->and($connection->readyToClose)->toBeFalse();
         $connection->socket->close();
     });
@@ -373,16 +374,16 @@ describe('WebSocket connection contract', function () {
         expect($connection->awaitingPong)->toBeTrue()
             ->and($connection->pingSent)->toBeFalse();
 
-        $connection->appendBytes($matching);
+        ReceivedMessages::collect($connection, $matching);
         expect($connection->awaitingPong)->toBeTrue();
 
         $connection->flush();
         expect($connection->pingSent)->toBeTrue();
 
-        $connection->appendBytes($different);
+        ReceivedMessages::collect($connection, $different);
         expect($connection->awaitingPong)->toBeTrue();
 
-        $connection->appendBytes($matching);
+        ReceivedMessages::collect($connection, $matching);
         expect($connection->awaitingPong)->toBeFalse()
             ->and($connection->pingSent)->toBeFalse();
         $connection->socket->close();

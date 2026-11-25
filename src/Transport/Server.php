@@ -20,6 +20,7 @@ use Componenta\WebSocket\Protocol\CloseCode;
 use Componenta\WebSocket\Protocol\CloseInfo;
 use Componenta\WebSocket\Protocol\Handshake\HandshakeInterface;
 use Componenta\WebSocket\Protocol\Handshake\HandshakeResponse;
+use Componenta\WebSocket\Protocol\Message;
 use Componenta\WebSocket\Socket\SocketInterface;
 use Componenta\WebSocket\Socket\SocketListenerFactoryInterface;
 use Componenta\WebSocket\Socket\SocketListenerInterface;
@@ -269,7 +270,9 @@ final class Server implements WebSocketServerInterface
 
         $session->recordActivity($this->clock->nowMilliseconds());
         try {
-            $messages = $connection->appendBytes($read->bytes);
+            $connection->receiveBytes($read->bytes, function (Message $message) use ($state, $session): void {
+                $this->deliverMessage($state, $session, $message);
+            });
         } catch (ProtocolException $error) {
             $this->protocolFailure($state, $session, $error);
             return;
@@ -284,34 +287,36 @@ final class Server implements WebSocketServerInterface
             $session->clearHeartbeat();
         }
 
-        foreach ($messages as $message) {
-            $previousState = $connection->state;
-            $completed = $this->applications->received($state->application, $connection->application, $message);
+        $this->flushOrWatch($state, $session);
+    }
 
-            if (!$completed && !$connection->closing) {
-                $this->closeConnection($state, $session, CloseInfo::transport('Unable to queue application error close frame.'));
-                return;
-            }
-            if (!$completed || !$this->running || $connection->state !== $previousState) {
-                break;
-            }
+    private function deliverMessage(ServerRunState $state, ActiveSession $session, Message $message): void
+    {
+        $connection = $session->connection;
+        if (!$this->running || !$state->hasActive($session) || $connection->closing || $connection->closed) {
+            return;
         }
 
-        $this->flushOrWatch($state, $session);
+        $completed = $this->applications->received($state->application, $connection->application, $message);
+        if (!$completed && !$connection->closing) {
+            $this->closeConnection($state, $session, CloseInfo::transport('Unable to queue application error close frame.'));
+        }
     }
 
     private function protocolFailure(ServerRunState $state, ActiveSession $session, ProtocolException $error): void
     {
         $connection = $session->connection;
-        $this->fail($state, WebSocketErrorPhase::READ, $connection, $error);
 
         try {
             $result = $connection->failProtocol($error->closeCode, 'WebSocket protocol error');
         } catch (\Throwable $failure) {
+            $this->fail($state, WebSocketErrorPhase::READ, $connection, $error);
             $this->fail($state, WebSocketErrorPhase::WRITE, $connection, $failure);
             $this->closeConnection($state, $session, CloseInfo::transport('Unable to queue protocol error close frame.'));
             return;
         }
+
+        $this->fail($state, WebSocketErrorPhase::READ, $connection, $error);
 
         if (!$result->accepted) {
             $this->closeConnection($state, $session, CloseInfo::transport('Unable to queue protocol error close frame.'));

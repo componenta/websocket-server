@@ -130,7 +130,7 @@ $app = new RoutedWebSocketApplication(
 | Контракт | Миграция |
 |---|---|
 | `MonotonicClockInterface` | Реализуйте `nowMilliseconds(): float` как источник монотонного времени, а не календарного. Стандартная реализация использует `hrtime()`; часы PSR-20 больше не требуются. |
-| `TransportConnectionInterface` | Предоставьте стабильный ограниченный объект `application`, `setWriteNotifier()`, `readyToClose`, `failProtocol()`, `awaitingPong` и `pingSent`. Уведомляйте среду выполнения при появлении данных в пустой очереди или начале закрытия. |
+| `TransportConnectionInterface` | Предоставьте стабильный ограниченный объект `application`, `setWriteNotifier()`, `readyToClose`, `failProtocol()`, `awaitingPong` и `pingSent`. Замените `appendBytes()` на `receiveBytes(string $bytes, Closure $onMessage): void`: вызывайте обработчик сообщения синхронно, до обработки следующих кадров. Уведомляйте среду выполнения при появлении данных в пустой очереди или начале закрытия. |
 | `PendingConnectionInterface` | Используйте `append(string $bytes)` и `expired(float $nowMs, int $timeoutMs)`; прежние отметки активности и дублирующий адрес удалены из контракта. |
 | `ConnectionFactoryInterface` | Принимайте необязательный общий `OutgoingBudget` и резервируйте объём исходящих данных до их отправки или удаления из очереди. |
 | `WebSocketApplicationInvokerInterface` | Возвращайте логическое значение из `connected()` и `received()`: успешность выполнения обработчика или зарегистрированный сбой. |

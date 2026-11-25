@@ -40,9 +40,13 @@ interface TransportConnectionInterface extends ConnectionInterface
     public bool $pingSent { get; }
 
     /**
-     * @return list<Message>
+     * Process bytes in wire order and deliver complete messages synchronously.
+     * The callback is not retained; recursive receives are not supported.
+     * Further data messages are not delivered once closing begins.
+     *
+     * @param \Closure(Message): void $onMessage
      */
-    public function appendBytes(string $bytes): array;
+    public function receiveBytes(string $bytes, \Closure $onMessage): void;
 
     public function ping(string $payload = ''): SendResult;
 
