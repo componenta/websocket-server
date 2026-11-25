@@ -221,4 +221,32 @@ describe('WebSocket frame codec', function () {
 
         expect($code)->toBe(CloseCode::PROTOCOL_ERROR);
     });
+
+    it('rejects extended payload lengths over the configured maximum before reading a body', function () {
+        $codec = new FrameCodec();
+        $buffer = "\x82\xff\x00\x00\x00\x01\x00\x00\x00\x00";
+        $original = $buffer;
+        $error = null;
+
+        try {
+            $codec->decode($buffer, maxPayloadSize: 1_048_576);
+        } catch (ProtocolException $exception) {
+            $error = $exception;
+        }
+
+        expect($error?->closeCode)->toBe(CloseCode::PAYLOAD_TOO_LARGE)
+            ->and($buffer)->toBe($original);
+    });
+
+    it('waits for a permitted extended payload without overflowing buffer length arithmetic', function () {
+        $codec = new FrameCodec();
+        $length = PHP_INT_SIZE >= 8
+            ? "\x7f\xff\xff\xff\xff\xff\xff\xff"
+            : "\x00\x00\x00\x00\x7f\xff\xff\xff";
+        $buffer = "\x82\xff" . $length;
+        $original = $buffer;
+
+        expect($codec->decode($buffer, maxPayloadSize: PHP_INT_MAX))->toBeNull()
+            ->and($buffer)->toBe($original);
+    });
 });

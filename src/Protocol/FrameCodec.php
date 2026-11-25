@@ -32,7 +32,9 @@ final class FrameCodec implements FrameCodecInterface
         } elseif ($length <= 65_535) {
             $header = pack('CCn', $first, $maskBit | 126, $length);
         } else {
-            $header = pack('CCNN', $first, $maskBit | 127, intdiv($length, 4_294_967_296), $length & 0xffffffff);
+            $header = PHP_INT_SIZE >= 8
+                ? pack('CCJ', $first, $maskBit | 127, $length)
+                : pack('CCNN', $first, $maskBit | 127, 0, $length);
         }
 
         if (!$masked) {
@@ -101,20 +103,23 @@ final class FrameCodec implements FrameCodecInterface
                 return null;
             }
 
-            $parts = unpack('Nhigh/Nlow', substr($buffer, $offset, 8));
-
-            if (($parts['high'] & 0x80000000) !== 0) {
+            if ((ord($buffer[$offset]) & 0x80) !== 0) {
                 throw new ProtocolException('WebSocket payload length has the reserved high bit set.');
             }
 
-            if ($parts['high'] > intdiv(max(0, $maxPayloadSize), 4_294_967_296)) {
-                throw new ProtocolException(
-                    'WebSocket payload is too large.',
-                    CloseCode::PAYLOAD_TOO_LARGE,
-                );
+            if (PHP_INT_SIZE >= 8) {
+                $payloadLength = unpack('J', $buffer, $offset)[1];
+            } else {
+                if (substr($buffer, $offset, 4) !== "\x00\x00\x00\x00"
+                    || (ord($buffer[$offset + 4]) & 0x80) !== 0
+                ) {
+                    throw new ProtocolException(
+                        'WebSocket payload is too large.',
+                        CloseCode::PAYLOAD_TOO_LARGE,
+                    );
+                }
+                $payloadLength = unpack('N', $buffer, $offset + 4)[1];
             }
-
-            $payloadLength = $parts['high'] * 4_294_967_296 + $parts['low'];
 
             if ($payloadLength < 65_536) {
                 throw new ProtocolException('WebSocket payload uses non-minimal length encoding.');
