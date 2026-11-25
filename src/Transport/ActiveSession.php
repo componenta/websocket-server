@@ -7,12 +7,14 @@ namespace Componenta\WebSocket\Transport;
 use Componenta\WebSocket\Connection\TransportConnectionInterface;
 use Componenta\WebSocket\Protocol\CloseCode;
 use Componenta\WebSocket\Protocol\CloseInfo;
+use Componenta\WebSocket\Protocol\Message;
 
 /** @internal Owns connection-specific runtime registrations and heartbeat state. */
 final class ActiveSession
 {
     public readonly SessionWatchers $watchers;
     public private(set) bool $announced = false;
+    public private(set) bool $processingInput = false;
     private ?float $queuedPingAt = null;
     private ?float $sentPingAt = null;
     private bool $shutdownInitiated = false;
@@ -49,6 +51,17 @@ final class ActiveSession
     public function recordActivity(float $now): void
     {
         $this->lastActivityAt = $now;
+    }
+
+    /** @param \Closure(Message): void $onMessage */
+    public function receiveBytes(string $bytes, \Closure $onMessage): void
+    {
+        $this->processingInput = true;
+        try {
+            $this->connection->receiveBytes($bytes, $onMessage);
+        } finally {
+            $this->processingInput = false;
+        }
     }
 
     public function pingQueued(float $now): void

@@ -6,7 +6,7 @@ on:
       checkpoint:
         description: 'Additional recent commit to compare hot paths against (full SHA)'
         required: false
-        default: 'f534b369829a70688c0d08b78984047624fe2122'
+        default: '1f482c9f30e2cd18814ceabed6f7996023b9721a'
   push:
     paths:
       - 'src/**'
@@ -41,7 +41,7 @@ jobs:
           tools: composer:v2
       - name: Install shared dependencies
         env:
-          CHECKPOINT: ${{ github.event_name == 'workflow_dispatch' && inputs.checkpoint || 'f534b369829a70688c0d08b78984047624fe2122' }}
+          CHECKPOINT: ${{ github.event_name == 'workflow_dispatch' && inputs.checkpoint || '1f482c9f30e2cd18814ceabed6f7996023b9721a' }}
         run: |
           set -euo pipefail
           git worktree add --detach "$RUNNER_TEMP/baseline" 2e547491d07bd0840dd0bff674b35c145fd0acc6
@@ -64,11 +64,12 @@ jobs:
           export WEBSOCKET_BENCH_SOURCE="$RUNNER_TEMP/checkpoint/src"
           vendor/bin/phpbench run --group=comparative --filter="$filter" --tag=checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/checkpoint.txt"
           vendor/bin/phpbench run --group=checkpoint-runtime --tag=deadline_checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/deadline-checkpoint.txt"
+          vendor/bin/phpbench run --group=network --tag=network_checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/network-checkpoint.txt"
           export WEBSOCKET_BENCH_SOURCE="$PWD/src"
           vendor/bin/phpbench run --group=checkpoint-runtime --tag=deadline_head --ref=deadline_checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/deadline-comparison.txt"
           vendor/bin/phpbench run --group=comparative --filter="$filter" --tag=checkpoint_head --ref=checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/checkpoint-comparison.txt"
           vendor/bin/phpbench run --group=runtime --tag=runtime --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/runtime.txt"
-          vendor/bin/phpbench run --group=network --tag=network --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/network.txt"
+          vendor/bin/phpbench run --group=network --tag=network --ref=network_checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/network.txt"
           cp -r .phpbench/storage "$RUNNER_TEMP/performance/storage"
       - uses: actions/upload-artifact@v4
         if: always()

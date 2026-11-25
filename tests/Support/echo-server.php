@@ -27,7 +27,22 @@ use Componenta\WebSocket\Socket\StreamSocketListener;
 use Componenta\WebSocket\Socket\StreamSocketSelector;
 use Componenta\WebSocket\Transport\Server;
 
-require dirname(__DIR__, 2) . '/vendor/autoload.php';
+$loader = require dirname(__DIR__, 2) . '/vendor/autoload.php';
+
+// Network benchmarks may compare runtime-compatible revisions. Stress tests
+// deliberately use the checked-out source unless a benchmark source is set.
+$source = getenv('WEBSOCKET_BENCH_SOURCE');
+if ($source !== false && $source !== '') {
+    $source = realpath($source);
+    if ($source === false || !is_file($source . '/Transport/Server.php')) {
+        throw new RuntimeException('Invalid benchmark server source directory.');
+    }
+    $loader->setPsr4('Componenta\\WebSocket\\', [$source]);
+    $file = (new ReflectionClass(Server::class))->getFileName();
+    if (!is_string($file) || !str_starts_with($file, $source . DIRECTORY_SEPARATOR)) {
+        throw new RuntimeException('Benchmark server loaded the wrong revision.');
+    }
+}
 
 // Bind an ephemeral loopback port without a release/rebind race.
 $listenerFactory = new class implements SocketListenerFactoryInterface {

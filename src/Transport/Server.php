@@ -282,7 +282,7 @@ final class Server implements WebSocketServerInterface
 
         $session->recordActivity($this->clock->nowMilliseconds());
         try {
-            $connection->receiveBytes($read->bytes, function (Message $message) use ($state, $session): void {
+            $session->receiveBytes($read->bytes, function (Message $message) use ($state, $session): void {
                 $this->deliverMessage($state, $session, $message);
             });
         } catch (ProtocolException $error) {
@@ -370,7 +370,10 @@ final class Server implements WebSocketServerInterface
                         $connection->closeInfo ?? CloseInfo::transport('WebSocket close handshake timed out.')));
             }
 
-            if ($connection->needsWrite) {
+            // The current read callback will attempt an immediate flush before
+            // returning to the loop. Register only if data remains queued then.
+            // Other sessions still register their own writers synchronously.
+            if ($connection->needsWrite && !$session->processingInput) {
                 $session->watchers->watchWrite($this->loop, $connection->socket,
                     fn () => $this->flushConnection($state, $session));
             }
