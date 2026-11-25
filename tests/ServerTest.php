@@ -1771,4 +1771,97 @@ describe('WebSocket server', function () {
             ->and($b->closed)->toBeTrue();
     });
 
+
+    it('releases remaining registrations and supports a second run after a watcher cancellation failure', function () {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, selectTimeoutUsec: 0, shutdownDrainTimeoutMs: 100);
+        $a = new ServerScriptedSocket('client', 'first-run', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'stop')),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::CLOSE, pack('n', 1001))),
+        ]);
+        $b = new ServerScriptedSocket('client', 'second-run', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'stop')),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::CLOSE, pack('n', 1001))),
+        ]);
+        $first = new ServerQueueListener('listener', $a);
+        $second = new ServerQueueListener('listener', $b);
+        $listeners = new class($first, $second) implements SocketListenerFactoryInterface {
+            private array $listeners;
+            public function __construct(SocketListenerInterface ...$listeners) { $this->listeners = $listeners; }
+            public function listen(WebSocketOptionsInterface $options): SocketListenerInterface
+            {
+                return array_shift($this->listeners) ?? throw new LogicException('Unexpected server run.');
+            }
+        };
+        $loop = new class(new SelectEventLoop(new ServerQueueSelector(), $clock, 0)) implements \Componenta\WebSocket\Loop\EventLoopInterface {
+            public bool $injectFailure = true;
+            /** @var list<\Componenta\WebSocket\Loop\LoopWatcherInterface|\Componenta\WebSocket\Loop\LoopTimerInterface> */
+            public array $registrations = [];
+            public function __construct(private readonly SelectEventLoop $delegate) {}
+            public function onReadable(SocketInterface|SocketListenerInterface $socket, callable $callback): \Componenta\WebSocket\Loop\LoopWatcherInterface
+            {
+                $watcher = $this->delegate->onReadable($socket, $callback);
+                $this->registrations[] = $watcher;
+                if (!$socket instanceof SocketListenerInterface || !$this->injectFailure) {
+                    return $watcher;
+                }
+                $this->injectFailure = false;
+                return new class($watcher) implements \Componenta\WebSocket\Loop\LoopWatcherInterface {
+                    public int|string $id { get => $this->delegate->id; }
+                    public bool $enabled { get => $this->delegate->enabled; }
+                    public function __construct(private readonly \Componenta\WebSocket\Loop\LoopWatcherInterface $delegate) {}
+                    public function cancel(): void
+                    {
+                        $this->delegate->cancel();
+                        throw new RuntimeException('listener cancellation failed');
+                    }
+                };
+            }
+            public function onWritable(SocketInterface $socket, callable $callback): \Componenta\WebSocket\Loop\LoopWatcherInterface
+            {
+                $watcher = $this->delegate->onWritable($socket, $callback);
+                $this->registrations[] = $watcher;
+                return $watcher;
+            }
+            public function delay(int $milliseconds, callable $callback): \Componenta\WebSocket\Loop\LoopTimerInterface
+            {
+                $timer = $this->delegate->delay($milliseconds, $callback);
+                $this->registrations[] = $timer;
+                return $timer;
+            }
+            public function defer(callable $callback): void { $this->delegate->defer($callback); }
+            public function run(): void { $this->delegate->run(); }
+            public function stop(): void { $this->delegate->stop(); }
+        };
+        $server = new Server($options, $listeners, $loop,
+            new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock);
+
+        foreach ([$first, $second] as $index => $listener) {
+            $application = new ServerRuntimeApplication(stopOnReceived: true);
+            $application->server = $server;
+            $fallback = $loop->delay(200, fn () => $server->stop());
+            $server->run($application);
+            $fallback->cancel();
+
+            expect($application->connected)->toBe(1)
+                ->and($application->received)->toBe(1)
+                ->and($application->disconnected)->toBe(1)
+                ->and($application->lastClose?->clean)->toBeTrue()
+                ->and($listener->closed)->toBeTrue()
+                ->and($application->errors)->toHaveCount($index === 0 ? 1 : 0);
+            if ($index === 0) {
+                expect($application->errors[0]->phase)->toBe(WebSocketErrorPhase::SHUTDOWN)
+                    ->and($application->errors[0]->error->getMessage())->toBe('listener cancellation failed');
+            }
+            foreach ($loop->registrations as $registration) {
+                expect($registration->enabled)->toBeFalse();
+            }
+            $loop->registrations = [];
+        }
+        expect($a->closed)->toBeTrue()->and($b->closed)->toBeTrue();
+    });
+
 });
