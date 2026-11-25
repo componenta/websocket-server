@@ -8,11 +8,17 @@ final class LoopWatcher implements LoopWatcherInterface
 {
     public private(set) bool $enabled = true;
 
+    private ?\Closure $callback;
+    private ?\Closure $cancel;
+
     public function __construct(
         public private(set) readonly int|string $id,
-        private readonly mixed $callback,
-        private readonly \Closure $cancel,
-    ) {}
+        callable $callback,
+        \Closure $cancel,
+    ) {
+        $this->callback = \Closure::fromCallable($callback);
+        $this->cancel = $cancel;
+    }
 
     public function cancel(): void
     {
@@ -21,13 +27,16 @@ final class LoopWatcher implements LoopWatcherInterface
         }
 
         $this->enabled = false;
-        ($this->cancel)($this);
+        $cancel = $this->cancel;
+        $this->callback = null;
+        $this->cancel = null;
+        $cancel?->__invoke($this);
     }
 
     public function invoke(): void
     {
         if ($this->enabled) {
-            ($this->callback)();
+            $this->callback?->__invoke();
         }
     }
 }

@@ -8,12 +8,18 @@ final class LoopTimer implements LoopTimerInterface
 {
     public private(set) bool $enabled = true;
 
+    private ?\Closure $callback;
+    private ?\Closure $cancel;
+
     public function __construct(
         public private(set) readonly int|string $id,
         public private(set) readonly float $dueAtMs,
-        private readonly mixed $callback,
-        private readonly \Closure $cancel,
-    ) {}
+        callable $callback,
+        \Closure $cancel,
+    ) {
+        $this->callback = \Closure::fromCallable($callback);
+        $this->cancel = $cancel;
+    }
 
     public function cancel(): void
     {
@@ -22,7 +28,10 @@ final class LoopTimer implements LoopTimerInterface
         }
 
         $this->enabled = false;
-        ($this->cancel)($this);
+        $cancel = $this->cancel;
+        $this->callback = null;
+        $this->cancel = null;
+        $cancel?->__invoke($this);
     }
 
     public function invoke(): void
@@ -31,10 +40,8 @@ final class LoopTimer implements LoopTimerInterface
             return;
         }
 
-        try {
-            ($this->callback)();
-        } finally {
-            $this->enabled = false;
-        }
+        $callback = $this->callback;
+        $this->cancel();
+        $callback?->__invoke();
     }
 }

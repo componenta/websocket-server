@@ -187,10 +187,12 @@ final class SelectEventLoop implements EventLoopInterface
         $this->deferred = [];
 
         foreach ($callbacks as $index => $callback) {
+            $completed = false;
             try {
                 $callback();
+                $completed = true;
             } finally {
-                if (!$this->running) {
+                if (!$completed || !$this->running) {
                     $this->deferred = array_merge(array_slice($callbacks, $index + 1), $this->deferred);
                 }
             }

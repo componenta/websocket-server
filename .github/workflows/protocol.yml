@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   push:
     paths:
+      - 'src/**'
+      - 'composer.json'
       - '.github/workflows/protocol.yml'
       - 'tests/Conformance/**'
   pull_request:

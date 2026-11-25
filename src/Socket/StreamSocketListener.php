@@ -18,6 +18,10 @@ final class StreamSocketListener implements StreamSocketListenerInterface
 
     public function accept(): ?SocketInterface
     {
+        if (!is_resource($this->resource)) {
+            return null;
+        }
+
         $client = @stream_socket_accept($this->resource, 0, $remoteAddress);
 
         if ($client === false) {
