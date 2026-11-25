@@ -31,7 +31,11 @@
         }
     },
     "require-dev": {
-        "pestphp/pest": "^4.3"
+        "pestphp/pest": "^4.3",
+        "phpbench/phpbench": "^1.7"
+    },
+    "scripts": {
+        "bench": "phpbench run --report=aggregate"
     },
     "config": {
         "allow-plugins": {
