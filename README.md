@@ -8,7 +8,7 @@ WebSocket server, protocol, socket, and connection primitives for Componenta. Th
 composer require componenta/websocket-server
 ```
 
-The package requires PHP `^8.4`, `componenta/config`, `componenta/http`, `psr/clock`, and PSR-11.
+The package requires PHP `^8.4`, `componenta/arrayable`, `componenta/config`, `componenta/http`, and PSR-11.
 
 ## Application Contract
 
@@ -36,21 +36,24 @@ final class EchoApplication implements WebSocketApplicationInterface
 }
 ```
 
-Connections expose immutable connection data and controlled write methods through `ConnectionInterface`:
+Application callbacks receive a stable, restricted `ConnectionInterface` handle, not the transport connection or its socket. Connection data is read-only except for the replaceable context:
 
 | API | Meaning |
 |---|---|
 | `$connection->id` | Framework connection id. |
 | `$connection->remoteAddress` | Remote socket address. |
 | `$connection->request` | Parsed WebSocket handshake request. |
-| `$connection->context` | Mutable connection context object. |
+| `$connection->context` | Replaceable context; `with()` and `without()` return new contexts, without cloning stored objects. |
 | `$connection->state` | Current connection state. |
+| `$connection->closeInfo` | Close metadata, or `null` before closing begins. |
 | `$connection->send(Message|string $message)` | Queue an existing `Message` or a text string. |
 | `$connection->sendText(string $payload)` | Queue a text message. |
 | `$connection->sendBinary(string $payload)` | Queue a binary message. |
 | `$connection->close(int $code, string $reason)` | Queue a close frame and move the connection toward closing. |
 
-Write methods return `SendResult`. Check `$result->accepted` before assuming the payload was queued; rejected results include a `$reason` and the current `$queuedBytes` value.
+Write methods return `SendResult`. An accepted result means queued, not delivered to the peer. Rejected results include a `$reason` and the current `$queuedBytes` value. Both per-connection and shared outgoing limits apply; handle backpressure rather than assuming sends succeed. Text must be valid UTF-8.
+
+`close()` starts the closing handshake; the connection stops accepting application messages and writes. The runtime waits for the peer's close frame and drains pending bytes within the configured deadline. `CloseInfo::clean` in the disconnect callback is true only for a completed, non-failed closing handshake. Abnormal transport termination is reported as such. Queues on other active connections are scheduled for writing even when those connections are idle.
 
 ## Message Routing
 
@@ -86,8 +89,20 @@ $app = new RoutedWebSocketApplication(
 | `HEARTBEAT_INTERVAL_MS` | `30000` |
 | `PONG_TIMEOUT_MS` | `10000` |
 | `MAX_CONNECTIONS` | `1024` |
+| `MAX_OUTGOING_BUFFER_SIZE` | `4194304` |
+| `MAX_TOTAL_OUTGOING_BUFFER_SIZE` | `67108864` |
+| `MAX_PENDING_HANDSHAKE_BYTES` | `8192` |
+| `PENDING_HANDSHAKE_TIMEOUT_MS` | `10000` |
+| `MAX_PENDING_CONNECTIONS` | `128` |
+| `IDLE_TIMEOUT_MS` | `0` |
+| `CLOSE_HANDSHAKE_TIMEOUT_MS` | `5000` |
+| `SHUTDOWN_DRAIN_TIMEOUT_MS` | `1000` |
+| `SELECT_TIMEOUT_USEC` | `200000` |
+| `BACKLOG` | `128` |
 
-Additional keys control outgoing buffer size, pending handshakes, idle timeout, shutdown drain timeout, select timeout, and listen backlog.
+The shared outgoing limit counts queued wire bytes for established connections within a single server run, not total process memory. Frame and message payload limits apply to incoming data. Pending handshakes have their own size, count and absolute time limits; receiving more bytes does not reset their deadline. Heartbeats use matching Ping/Pong payloads, and the Pong timeout starts when the Ping has been fully written. Time intervals use a monotonic clock. A zero heartbeat interval or idle timeout disables that feature; a zero shutdown drain timeout disables waiting.
+
+The default `ALLOWED_ORIGINS` permits any origin for compatibility. For browser-facing deployments configure an explicit allowlist of trusted origins. An empty list rejects all supplied origins; an absent Origin is still permitted for non-browser clients. Invalid origin entries are not silently converted to a wildcard. Origin validation is not authentication.
 
 ## Registered Services
 
@@ -98,12 +113,29 @@ Additional keys control outgoing buffer size, pending handshakes, idle timeout, 
 - `HandshakeInterface`
 - `ConnectionFactoryInterface`
 - `EventLoopInterface`
+- `MonotonicClockInterface`
 - `SocketListenerFactoryInterface`
 - `SocketSelectorInterface`
 - `WebSocketApplicationResolverInterface`
 - `WebSocketApplicationInvokerInterface`
 
-The default server uses stream sockets and a select-based event loop.
+The default server uses stream sockets and a select-based event loop. `MAX_CONNECTIONS` is an application admission limit, not a guarantee that the operating system or `stream_select()` can support that many file descriptors. Unselectable sockets are rejected at admission. For larger deployments, provide a compatible selector or event loop.
+
+## Migrating custom runtime implementations
+
+Application callback signatures and `ConnectionInterface` are unchanged. Applications must not cast their connection handles to a concrete transport class or depend on socket operations.
+
+Custom runtime adapters need to implement the following contracts:
+
+| Contract | Migration |
+|---|---|
+| `MonotonicClockInterface` | Implement `nowMilliseconds(): float` as an elapsed-time source, not wall-clock time. The default uses `hrtime()`; a PSR-20 clock is no longer required. |
+| `TransportConnectionInterface` | Provide the stable restricted `application` handle, `setWriteNotifier()`, `readyToClose`, `failProtocol()`, `awaitingPong` and `pingSent`. Notify the runtime when the queue becomes nonempty or closing begins. |
+| `PendingConnectionInterface` | Use `append(string $bytes)` and `expired(float $nowMs, int $timeoutMs)`; the former activity timestamps and redundant remote address are no longer exposed. |
+| `ConnectionFactoryInterface` | Accept the optional shared `OutgoingBudget` and enforce reservations for queued wire bytes until written or discarded. |
+| `WebSocketApplicationInvokerInterface` | Return a boolean from `connected()` and `received()` to indicate callback completion; false indicates reported failure. |
+| `SocketSelectorInterface` | Implement `assertSelectable()` to reject unusable targets before registering watchers. |
+| `WebSocketOptionsInterface` | Provide `closeHandshakeTimeoutMs` and `maxTotalOutgoingBufferSize`. |
 
 ## Boundary
 
