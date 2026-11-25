@@ -216,4 +216,28 @@ describe('WebSocket handshake', function () {
         'example%2Etest',
     ]);
 
+    it('keeps the validated origin allowlist independent of caller PHP references', function () {
+        $origin = 'https://trusted.example';
+        $options = new WebSocketOptions(allowedOrigins: [&$origin]);
+        $handshake = new Handshake($options);
+        $origin = '*';
+
+        expect($options->allowedOrigins)->toBe(['https://trusted.example'])
+            ->and($handshake->accept(webSocketHandshakeRequest(headers: [Header::ORIGIN => 'https://other.example']))->status)->toBe(403)
+            ->and($handshake->accept(webSocketHandshakeRequest(headers: [Header::ORIGIN => 'https://trusted.example']))->accepted)->toBeTrue();
+    });
+
+    it('does not expose or retain direct references to immutable handshake header values', function () {
+        $authorization = 'Bearer original';
+        $request = new Componenta\WebSocket\Protocol\Handshake\HandshakeRequest('GET', '/ws', '/ws', [
+            'authorization' => &$authorization,
+        ]);
+        $authorization = 'Bearer changed';
+        $copy = $request->headers;
+        $copy['authorization'] = 'Bearer overwritten';
+
+        expect($request->header('Authorization'))->toBe('Bearer original')
+            ->and($authorization)->toBe('Bearer changed');
+    });
+
 });

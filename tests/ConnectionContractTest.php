@@ -704,4 +704,34 @@ describe('WebSocket connection contract', function () {
         $incoming->release(16);
     });
 
+    it('does not release another connection reservation when a custom assembler reports a negative retained size', function () {
+        $budget = new Componenta\WebSocket\Connection\BufferBudget(100);
+        $assembler = new class implements Componenta\WebSocket\Protocol\MessageAssemblerInterface {
+            public int $bufferedBytes = 0;
+            public function push(Frame $frame): ?Message
+            {
+                $this->bufferedBytes = -1;
+                return null;
+            }
+            public function reset(): void { $this->bufferedBytes = 0; }
+        };
+        $codec = new FrameCodec();
+        $socket = new ConnectionPartialWriteSocket('invalid-assembler');
+        $connection = new Connection($socket, $codec, $assembler, 1024, 'invalid-assembler',
+            new HandshakeRequest('GET', '/ws', '/ws', []), incomingBudget: $budget);
+        expect($budget->reserve(80))->toBeTrue();
+
+        try {
+            $wire = $codec->encode(new Frame(Opcode::TEXT, 'hello'), true, 'mask');
+            expect(fn () => ReceivedMessages::collect($connection, $wire))->toThrow(LogicException::class);
+            $connection->markClosed();
+            expect($budget->reserve(21))->toBeFalse()
+                ->and($budget->reserve(20))->toBeTrue();
+            $budget->release(20);
+        } finally {
+            $connection->markClosed();
+            $budget->release(80);
+        }
+    });
+
 });
