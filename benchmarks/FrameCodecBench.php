@@ -54,6 +54,15 @@ final class FrameCodecBench
 
     #[Bench\BeforeMethods('setUpLarge')]
     #[Bench\Revs(15)]
+    public function benchEncodeLargeMasked(): void
+    {
+        if ($this->codec->encode($this->large, true, 'mask') !== $this->largeWire) {
+            throw new \RuntimeException('Incorrect encoded large masked frame.');
+        }
+    }
+
+    #[Bench\BeforeMethods('setUpLarge')]
+    #[Bench\Revs(15)]
     public function benchRoundTripLargeMasked(): void
     {
         $wire = $this->codec->encode($this->large, true, 'mask');

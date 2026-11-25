@@ -51,7 +51,7 @@ final class Connection implements TransportConnectionInterface
     private(set) int $receivedPongs = 0;
 
     public bool $needsWrite {
-        get => $this->queuedBytes > 0;
+        get => $this->outgoingBuffer->size > 0;
     }
 
     public int $queuedBytes {
@@ -204,7 +204,7 @@ final class Connection implements TransportConnectionInterface
 
     public function flush(): bool
     {
-        if (!$this->needsWrite) {
+        if ($this->outgoingBuffer->size === 0) {
             return true;
         }
 
@@ -218,7 +218,9 @@ final class Connection implements TransportConnectionInterface
         if ($written->status === SocketWriteStatus::WRITTEN) {
             $this->outgoingBuffer->consume($written->writtenBytes);
             $this->outgoingBudget?->release($written->writtenBytes);
-            $this->pendingPingBytes = max(0, $this->pendingPingBytes - $written->writtenBytes);
+            if ($this->pendingPingBytes !== 0) {
+                $this->pendingPingBytes = max(0, $this->pendingPingBytes - $written->writtenBytes);
+            }
         }
 
         return true;
@@ -255,8 +257,11 @@ final class Connection implements TransportConnectionInterface
         $this->writeNotifier = null;
         $this->pendingPingPayload = null;
         $this->pendingPingBytes = 0;
-        $this->outgoingBudget?->release($this->queuedBytes);
-        $this->outgoingBuffer->clear();
+        $queuedBytes = $this->outgoingBuffer->size;
+        if ($queuedBytes !== 0) {
+            $this->outgoingBudget?->release($queuedBytes);
+            $this->outgoingBuffer->clear();
+        }
         $this->resetIncoming();
     }
 
@@ -271,8 +276,10 @@ final class Connection implements TransportConnectionInterface
             throw new \LogicException('Decoder or assembler retained more bytes than received.');
         }
 
-        $this->incomingBudget->release($this->incomingReservedBytes - $retained);
-        $this->incomingReservedBytes = $retained;
+        if ($retained !== $this->incomingReservedBytes) {
+            $this->incomingBudget->release($this->incomingReservedBytes - $retained);
+            $this->incomingReservedBytes = $retained;
+        }
     }
 
     private function resetIncoming(): void
@@ -281,8 +288,10 @@ final class Connection implements TransportConnectionInterface
         try {
             $this->assembler->reset();
         } finally {
-            $this->incomingBudget?->release($this->incomingReservedBytes);
-            $this->incomingReservedBytes = 0;
+            if ($this->incomingReservedBytes !== 0) {
+                $this->incomingBudget?->release($this->incomingReservedBytes);
+                $this->incomingReservedBytes = 0;
+            }
         }
     }
 
@@ -369,16 +378,17 @@ final class Connection implements TransportConnectionInterface
             throw new \LogicException('Frame codec reported a negative encoded size.');
         }
 
-        if ($encodedBytes > $this->maxOutgoingBufferSize - $this->queuedBytes) {
-            return SendResult::rejected('Outgoing WebSocket buffer is full.', $this->queuedBytes);
+        $queuedBytes = $this->outgoingBuffer->size;
+        if ($encodedBytes > $this->maxOutgoingBufferSize - $queuedBytes) {
+            return SendResult::rejected('Outgoing WebSocket buffer is full.', $queuedBytes);
         }
 
         if ($frame->opcode === Opcode::TEXT && !$this->isValidUtf8($frame->payload)) {
-            return SendResult::rejected('WebSocket text message payload must be valid UTF-8.', $this->queuedBytes);
+            return SendResult::rejected('WebSocket text message payload must be valid UTF-8.', $queuedBytes);
         }
 
         if ($this->outgoingBudget !== null && !$this->outgoingBudget->reserve($encodedBytes)) {
-            return SendResult::rejected('Server outgoing WebSocket budget is full.', $this->queuedBytes);
+            return SendResult::rejected('Server outgoing WebSocket budget is full.', $queuedBytes);
         }
 
         try {
@@ -386,7 +396,7 @@ final class Connection implements TransportConnectionInterface
             if (strlen($encoded) !== $encodedBytes) {
                 throw new \LogicException('Frame codec encoded size does not match its reported size.');
             }
-            $wasEmpty = !$this->needsWrite;
+            $wasEmpty = $this->outgoingBuffer->size === 0;
             $this->outgoingBuffer->append($encoded);
         } catch (\Throwable $error) {
             $this->outgoingBudget?->release($encodedBytes);
@@ -400,7 +410,7 @@ final class Connection implements TransportConnectionInterface
             }
         }
 
-        return SendResult::accepted($this->queuedBytes);
+        return SendResult::accepted($this->outgoingBuffer->size);
     }
 
     private function parseCloseInfo(string $payload): CloseInfo

@@ -8,6 +8,9 @@ use Componenta\WebSocket\Exception\ProtocolException;
 
 final class FrameCodec implements FrameCodecInterface
 {
+    private const int MASK_CHUNK_SIZE = 65_536;
+
+
     public function encodedSize(Frame $frame, bool $masked = false): int
     {
         $length = strlen($frame->payload);
@@ -45,6 +48,10 @@ final class FrameCodec implements FrameCodecInterface
 
         if (strlen($maskKey) !== 4) {
             throw new \InvalidArgumentException('WebSocket mask key must be exactly 4 bytes.');
+        }
+
+        if ($length > self::MASK_CHUNK_SIZE) {
+            return $this->appendMaskedRange($header . $maskKey, $payload, 0, $length, $maskKey);
         }
 
         return $header . $maskKey . $this->mask($payload, $maskKey);
@@ -91,7 +98,7 @@ final class FrameCodec implements FrameCodecInterface
                 return null;
             }
 
-            $payloadLength = unpack('n', substr($buffer, $offset, 2))[1];
+            $payloadLength = unpack('n', $buffer, $offset)[1];
 
             if ($payloadLength < 126) {
                 throw new ProtocolException('WebSocket payload uses non-minimal length encoding.');
@@ -154,16 +161,36 @@ final class FrameCodec implements FrameCodecInterface
         $maskKey = $masked ? substr($buffer, $offset, 4) : null;
         $offset += $maskLength;
 
-        $payload = substr($buffer, $offset, $payloadLength);
-        $offset += $payloadLength;
+        if ($maskKey !== null && $payloadLength > self::MASK_CHUNK_SIZE) {
+            $payload = $this->appendMaskedRange('', $buffer, $offset, $payloadLength, $maskKey);
+            $buffer = substr($buffer, $offset + $payloadLength);
+        } else {
+            $payload = substr($buffer, $offset, $payloadLength);
+            $buffer = substr($buffer, $offset + $payloadLength);
 
-        $buffer = substr($buffer, $offset);
-
-        if ($maskKey !== null) {
-            $payload = $this->mask($payload, $maskKey);
+            if ($maskKey !== null) {
+                $payload = $this->mask($payload, $maskKey);
+            }
         }
 
         return new Frame($opcode, $payload, $final);
+    }
+
+    /**
+     * Append a masked range without allocating a full-payload mask or copying
+     * the entire encoded payload first. Chunk boundaries preserve mask phase.
+     */
+    private function appendMaskedRange(string $result, string $source, int $offset, int $length, string $maskKey): string
+    {
+        $mask = str_repeat($maskKey, intdiv(self::MASK_CHUNK_SIZE, 4));
+        while ($length > 0) {
+            $count = min(self::MASK_CHUNK_SIZE, $length);
+            $result .= substr($source, $offset, $count) ^ $mask;
+            $offset += $count;
+            $length -= $count;
+        }
+
+        return $result;
     }
 
     private function mask(string $payload, string $maskKey): string

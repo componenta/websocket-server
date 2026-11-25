@@ -207,7 +207,7 @@ describe('WebSocket frame codec', function () {
         expect(substr($buffer, -$length ?: strlen($buffer)))->toBe($expectedMasked)
             ->and($codec->decode($buffer)?->payload)->toBe($payload)
             ->and($buffer)->toBe('');
-    })->with([0, 1, 3, 4, 5, 125, 126, 65535, 65536, 1048576]);
+    })->with([0, 1, 3, 4, 5, 125, 126, 65535, 65536, 65537, 131075, 1048575, 1048576]);
 
     it('rejects a frame with the reserved most significant payload length bit set', function () {
         $codec = new FrameCodec();
@@ -250,4 +250,29 @@ describe('WebSocket frame codec', function () {
         expect($codec->decode($buffer, maxPayloadSize: PHP_INT_MAX))->toBeNull()
             ->and($buffer)->toBe($original);
     });
+
+    it('unmasks a large frame without consuming a following partial frame', function (int $length) {
+        $codec = new FrameCodec();
+        $payload = substr(str_repeat("\x00\xfe\x11\xab\x17", intdiv($length + 4, 5)), 0, $length);
+        $key = "\x12\x34\x56\x78";
+        $masked = $payload ^ str_repeat($key, intdiv($length + 3, 4));
+        $following = "\x81\x85mask";
+        $buffer = "\x82\xff" . pack('NN', 0, $length) . $key . $masked . $following;
+
+        expect($codec->decode($buffer)?->payload)->toBe($payload)
+            ->and($buffer)->toBe($following)
+            ->and($codec->decode($buffer))->toBeNull()
+            ->and($buffer)->toBe($following);
+    })->with([65_537, 131_075, 1_048_575]);
+
+    it('resets a zero-byte fragmented message even when no payload bytes were retained', function () {
+        $assembler = new MessageAssembler(1024);
+        expect($assembler->push(new Frame(Opcode::TEXT, '', false)))->toBeNull()
+            ->and($assembler->bufferedBytes)->toBe(0);
+        expect(fn () => $assembler->push(new Frame(Opcode::TEXT, 'new')))
+            ->toThrow(ProtocolException::class);
+        $assembler->reset();
+        expect($assembler->push(new Frame(Opcode::TEXT, 'new'))?->payload)->toBe('new');
+    });
+
 });

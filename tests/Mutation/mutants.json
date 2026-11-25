@@ -42,7 +42,7 @@
   {
     "id": "outgoing-limit",
     "file": "Connection/Connection.php",
-    "original": "if ($encodedBytes > $this->maxOutgoingBufferSize - $this->queuedBytes) {",
+    "original": "if ($encodedBytes > $this->maxOutgoingBufferSize - $queuedBytes) {",
     "replacement": "if (false) {",
     "test": "ConnectionContractTest.php",
     "filter": "rejects oversized outgoing frames before encoding them"

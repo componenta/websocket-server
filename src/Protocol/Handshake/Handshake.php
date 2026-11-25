@@ -31,15 +31,17 @@ final readonly class Handshake implements HandshakeInterface
             return $this->reject(404, 'Not Found', $request);
         }
 
-        if (!$this->containsHeaderToken($request->header(Header::UPGRADE), 'websocket')) {
+        $headers = $request->headers;
+
+        if (!$this->containsHeaderToken($headers['upgrade'] ?? null, 'websocket')) {
             return $this->reject(400, 'Missing WebSocket upgrade header', $request);
         }
 
-        if (!$this->containsHeaderToken($request->header(Header::CONNECTION), 'upgrade')) {
+        if (!$this->containsHeaderToken($headers['connection'] ?? null, 'upgrade')) {
             return $this->reject(400, 'Missing connection upgrade token', $request);
         }
 
-        if (($request->header(Header::SEC_WEBSOCKET_VERSION) ?? '') !== '13') {
+        if (($headers['sec-websocket-version'] ?? '') !== '13') {
             return $this->reject(426, 'Upgrade Required', $request, [
                 Header::CONNECTION => 'Upgrade, close',
                 Header::UPGRADE => 'websocket',
@@ -47,13 +49,13 @@ final readonly class Handshake implements HandshakeInterface
             ]);
         }
 
-        $key = $request->header(Header::SEC_WEBSOCKET_KEY);
+        $key = $headers['sec-websocket-key'] ?? null;
 
         if (!$this->isValidKey($key)) {
             return $this->reject(400, 'Invalid WebSocket key', $request);
         }
 
-        $origin = $request->header(Header::ORIGIN);
+        $origin = $headers['origin'] ?? null;
 
         if ($origin !== null && !$this->originAllowed($origin)) {
             return $this->reject(403, 'Forbidden origin', $request);
@@ -161,7 +163,7 @@ final readonly class Handshake implements HandshakeInterface
         // URI reg-name: require complete percent escapes. A raw comma is
         // deliberately excluded to reject ambiguous combined Host fields.
         if ($authority[0] !== '[') {
-            return preg_match('/\A(?:[a-z0-9._~!$&\'()*+;=-]|%[0-9a-f]{2})+(?::[0-9]+)?\z/i', $authority) === 1;
+            return preg_match('/\A(?:[a-z0-9._~!$&\'()*+;=-]++|%[0-9a-f]{2})++(?::[0-9]+)?\z/i', $authority) === 1;
         }
 
         if (preg_match('/\A\[([^\]]+)\](?::[0-9]+)?\z/', $authority, $match) !== 1) {

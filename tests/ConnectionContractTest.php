@@ -674,4 +674,34 @@ describe('WebSocket connection contract', function () {
         }
     });
 
+
+    it('releases all reservations after fully drained writes and repeated closing', function () {
+        $codec = new FrameCodec();
+        $outgoing = new Componenta\WebSocket\Connection\BufferBudget(16);
+        $incoming = new Componenta\WebSocket\Connection\BufferBudget(16);
+        $socket = new ConnectionPartialWriteSocket('drained');
+        $connection = new Connection($socket, $codec, new MessageAssembler(1024), 1024, 'drained',
+            new HandshakeRequest('GET', '/ws', '/ws', []), outgoingBudget: $outgoing, incomingBudget: $incoming);
+
+        expect($connection->sendText('hello')->accepted)->toBeTrue()
+            ->and($connection->flush())->toBeTrue()
+            ->and($connection->queuedBytes)->toBe(0);
+        expect($connection->ping('ping')->accepted)->toBeTrue()
+            ->and($connection->flush())->toBeTrue()
+            ->and($connection->pingSent)->toBeTrue();
+        $connection->receiveBytes("\x8a\x84mask" . ('ping' ^ 'mask'), static function (Message $message): void {
+            throw new RuntimeException('Unexpected application message.');
+        });
+        expect($connection->awaitingPong)->toBeFalse()
+            ->and($connection->close()->accepted)->toBeTrue()
+            ->and($connection->flush())->toBeTrue();
+        $connection->markClosed();
+        $connection->markClosed();
+        expect($connection->queuedBytes)->toBe(0)
+            ->and($outgoing->reserve(16))->toBeTrue()
+            ->and($incoming->reserve(16))->toBeTrue();
+        $outgoing->release(16);
+        $incoming->release(16);
+    });
+
 });
