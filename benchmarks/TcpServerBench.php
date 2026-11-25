@@ -33,7 +33,7 @@ final class TcpServerBench
 
         try {
             $this->process = proc_open(
-                [PHP_BINARY, '-d', 'opcache.enable_cli=0', '-d', 'opcache.jit=0', __DIR__ . '/Support/echo-server.php'],
+                [PHP_BINARY, '-d', 'opcache.enable_cli=0', '-d', 'opcache.jit=0', dirname(__DIR__) . '/tests/Support/echo-server.php'],
                 [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['file', $log, 'a']],
                 $pipes,
             );

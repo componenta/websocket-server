@@ -1,0 +1,54 @@
+name: TCP stress
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - 'tests/Stress/**'
+      - 'tests/Support/echo-server.php'
+      - 'composer.json'
+      - '.github/workflows/stress.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/Stress/**'
+      - 'tests/Support/echo-server.php'
+      - 'composer.json'
+      - '.github/workflows/stress.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pcntl
+          coverage: none
+          tools: composer:v2
+      - run: composer install --no-interaction --prefer-dist
+      - name: Exercise sustained loopback sessions and churn
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/Stress/run.py --seconds=60 | tee "$RUNNER_TEMP/stress.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-php-${{ matrix.php }}
+          path: ${{ runner.temp }}/stress.json
+          if-no-files-found: error
