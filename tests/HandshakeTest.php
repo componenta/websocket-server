@@ -60,4 +60,36 @@ describe('WebSocket handshake', function () {
         expect($response->accepted)->toBeFalse()
             ->and($response->status)->toBe(403);
     });
+
+    it('rejects malformed HTTP upgrade requests', function (string $request) {
+        $response = (new Handshake(new WebSocketOptions()))->accept($request);
+
+        expect($response->accepted)->toBeFalse()
+            ->and($response->status)->toBe(400);
+    })->with([
+        'HTTP 1.0' => fn () => str_replace('HTTP/1.1', 'HTTP/1.0', webSocketHandshakeRequest()),
+        'missing host' => fn () => str_replace("Host: example.test\r\n", '', webSocketHandshakeRequest()),
+        'duplicate host' => fn () => str_replace("Host: example.test\r\n", "Host: example.test\r\nHost: another.test\r\n", webSocketHandshakeRequest()),
+        'whitespace before colon' => fn () => str_replace('Host:', 'Host :', webSocketHandshakeRequest()),
+        'invalid field name' => fn () => str_replace("\r\n\r\n", "\r\nBad Header: value\r\n\r\n", webSocketHandshakeRequest()),
+        'duplicate origin' => fn () => str_replace("\r\n\r\n", "\r\nOrigin: https://a.test\r\nOrigin: https://b.test\r\n\r\n", webSocketHandshakeRequest()),
+        'invalid field value' => fn () => str_replace("\r\n\r\n", "\r\nX-Test: a\x00b\r\n\r\n", webSocketHandshakeRequest()),
+    ]);
+
+    it('accepts a websocket upgrade token in a comma separated list', function () {
+        $response = (new Handshake(new WebSocketOptions()))->accept(
+            webSocketHandshakeRequest(headers: [Header::UPGRADE => 'other, WebSocket']),
+        );
+
+        expect($response->accepted)->toBeTrue();
+    });
+
+    it('rejects browser origins when the allowlist is empty', function () {
+        $response = (new Handshake(new WebSocketOptions(allowedOrigins: [])))->accept(
+            webSocketHandshakeRequest(headers: [Header::ORIGIN => 'https://example.test']),
+        );
+
+        expect($response->accepted)->toBeFalse()
+            ->and($response->status)->toBe(403);
+    });
 });

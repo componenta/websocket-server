@@ -33,6 +33,12 @@ final readonly class WebSocketOptions implements WebSocketOptionsInterface
         public int $selectTimeoutUsec = 200_000,
         public int $backlog = 128,
     ) {
+        foreach ($this->allowedOrigins as $origin) {
+            if (!is_string($origin) || $origin === '' || trim($origin) !== $origin) {
+                throw new \InvalidArgumentException('WebSocket allowed origins must be non-empty strings without surrounding whitespace.');
+            }
+        }
+
         if ($this->port < 1 || $this->port > 65_535) {
             throw new \InvalidArgumentException('WebSocket port must be between 1 and 65535.');
         }
@@ -126,17 +132,13 @@ final readonly class WebSocketOptions implements WebSocketOptionsInterface
         $normalized = [];
 
         foreach ($origins as $origin) {
-            if (!is_string($origin)) {
-                continue;
+            if (!is_string($origin) || trim($origin) === '') {
+                throw new \InvalidArgumentException('WebSocket allowed origins must be non-empty strings.');
             }
 
-            $origin = trim($origin);
-
-            if ($origin !== '') {
-                $normalized[] = $origin;
-            }
+            $normalized[] = trim($origin);
         }
 
-        return $normalized === [] ? ['*'] : array_values(array_unique($normalized));
+        return array_values(array_unique($normalized));
     }
 }

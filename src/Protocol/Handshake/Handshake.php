@@ -6,7 +6,6 @@ namespace Componenta\WebSocket\Protocol\Handshake;
 
 use Componenta\Http\Header;
 use Componenta\WebSocket\Config\WebSocketOptionsInterface;
-use Componenta\WebSocket\Connection\Connection;
 
 final readonly class Handshake implements HandshakeInterface
 {
@@ -32,9 +31,7 @@ final readonly class Handshake implements HandshakeInterface
             return $this->reject(404, 'Not Found', $request);
         }
 
-        $upgrade = strtolower($request->header(Header::UPGRADE) ?? '');
-
-        if ($upgrade !== 'websocket') {
+        if (!$this->containsHeaderToken($request->header(Header::UPGRADE), 'websocket')) {
             return $this->reject(400, 'Missing WebSocket upgrade header', $request);
         }
 
@@ -82,7 +79,7 @@ final readonly class Handshake implements HandshakeInterface
         $requestLine = array_shift($lines);
 
         if (!is_string($requestLine)
-            || !preg_match('/^(?<method>[A-Z]+)\s+(?<target>\S+)\s+HTTP\/1\.[01]$/', $requestLine, $matches)
+            || !preg_match('/^(?<method>[!#$%&\'*+.^_\x60|~0-9A-Za-z-]+) (?<target>[^\x00-\x20\x7f]+) HTTP\/1\.1\z/', $requestLine, $matches)
         ) {
             return null;
         }
@@ -100,10 +97,15 @@ final readonly class Handshake implements HandshakeInterface
                 return null;
             }
 
-            $name = strtolower(trim(substr($line, 0, $separator)));
-            $value = trim(substr($line, $separator + 1));
+            $name = strtolower(substr($line, 0, $separator));
+            $value = trim(substr($line, $separator + 1), " \t");
 
-            if ($name === '') {
+            if (!preg_match('/^[!#$%&\'*+.^_\x60|~0-9a-z-]+\z/', $name)
+                || preg_match('/[\x00-\x08\x0a-\x1f\x7f]/', $value)
+                || (isset($headers[$name]) && in_array($name, [
+                    'host', 'origin', 'sec-websocket-key', 'sec-websocket-version',
+                ], true))
+            ) {
                 return null;
             }
 
@@ -112,11 +114,28 @@ final readonly class Handshake implements HandshakeInterface
                 : $value;
         }
 
-        $target = $matches['target'];
-        $path = parse_url($target, PHP_URL_PATH);
+        $host = $headers['host'] ?? '';
+        if (!preg_match('/^(?:\[[0-9a-f:.]+\]|[a-z0-9._~!$&\'()*+;=%-]+)(?::[0-9]+)?\z/i', $host)) {
+            return null;
+        }
 
-        if (!is_string($path) || $path === '') {
-            $path = '/';
+        $target = $matches['target'];
+        if (str_contains($target, '#')) {
+            return null;
+        }
+
+        if (str_starts_with($target, '/')) {
+            $path = explode('?', $target, 2)[0];
+        } else {
+            $parts = parse_url($target);
+            if ($parts === false
+                || !in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true)
+                || !isset($parts['host'])
+                || isset($parts['user'])
+            ) {
+                return null;
+            }
+            $path = $parts['path'] ?? '/';
         }
 
         return new HandshakeRequest($matches['method'], $target, $path, $headers);
@@ -171,7 +190,7 @@ final readonly class Handshake implements HandshakeInterface
 
         $decoded = base64_decode($key, true);
 
-        return is_string($decoded) && strlen($decoded) === 16;
+        return is_string($decoded) && strlen($decoded) === 16 && base64_encode($decoded) === $key;
     }
 
     private function originAllowed(string $origin): bool
