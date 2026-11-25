@@ -271,4 +271,96 @@ describe('WebSocket event loop', function () {
         expect($events)->toBe(['pending', 'new']);
     });
 
+
+    it('recalculates timer deadlines after cancelling the earliest and scheduling new timers', function () {
+        $clock = new class implements MonotonicClockInterface {
+            public float $now = 0.0;
+            public function nowMilliseconds(): float { return $this->now; }
+        };
+        $selector = new class($clock) implements SocketSelectorInterface {
+            public array $timeouts = [];
+            public function __construct(private readonly MonotonicClockInterface $clock) {}
+            public function assertSelectable(SocketInterface|SocketListenerInterface $target): void {}
+            public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection
+            {
+                if (count($this->timeouts) >= 8) {
+                    throw new RuntimeException('Timer did not become due.');
+                }
+                $this->timeouts[] = $timeoutUsec;
+                $this->clock->now += $timeoutUsec / 1000;
+                return new SocketSelection([], [], []);
+            }
+        };
+        $loop = new SelectEventLoop($selector, $clock, 100_000);
+        $events = [];
+        $watcher = $loop->onReadable(new EventLoopTestSocket('idle'), static function (): void {});
+        $cancelled = $loop->delay(20, static function (): void {
+            throw new RuntimeException('Cancelled timer invoked.');
+        });
+        $loop->delay(50, function () use (&$events, $loop): void {
+            $events[] = 'last';
+            $loop->stop();
+        });
+        $cancelled->cancel();
+        $loop->delay(30, function () use (&$events, $loop): void {
+            $events[] = 'first';
+            $loop->delay(5, function () use (&$events): void {
+                $events[] = 'new';
+            });
+        });
+
+        try {
+            $loop->run();
+
+            expect($events)->toBe(['first', 'new', 'last'])
+                ->and($selector->timeouts)->toBe([30_000, 5_000, 15_000]);
+        } finally {
+            $watcher->cancel();
+        }
+    });
+
+    it('keeps due callbacks in registration order and handles cancellation during dispatch', function () {
+        $clock = new class implements MonotonicClockInterface {
+            public float $now = 0.0;
+            public function nowMilliseconds(): float { return $this->now; }
+        };
+        $selector = new class implements SocketSelectorInterface {
+            public function assertSelectable(SocketInterface|SocketListenerInterface $target): void {}
+            public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection
+            {
+                throw new RuntimeException('No poll expected before due timer callbacks.');
+            }
+        };
+        $loop = new SelectEventLoop($selector, $clock, 0);
+        $events = [];
+        $cancelled = null;
+        $watcher = $loop->onReadable(new EventLoopTestSocket('idle'), static function (): void {});
+        $loop->delay(50, function () use (&$events, &$cancelled, $loop): void {
+            $events[] = 'registered first';
+            $cancelled->cancel();
+            $loop->delay(1, function () use (&$events, $loop): void {
+                $events[] = 'new';
+                $loop->stop();
+            });
+        });
+        $cancelled = $loop->delay(10, static function (): void {
+            throw new RuntimeException('Cancelled timer invoked.');
+        });
+        $loop->delay(20, function () use (&$events, $loop): void {
+            $events[] = 'registered third';
+            $loop->stop();
+        });
+        $clock->now = 60;
+
+        try {
+            $loop->run();
+            expect($events)->toBe(['registered first', 'registered third']);
+            $clock->now = 61;
+            $loop->run();
+            expect($events)->toBe(['registered first', 'registered third', 'new']);
+        } finally {
+            $watcher->cancel();
+        }
+    });
+
 });

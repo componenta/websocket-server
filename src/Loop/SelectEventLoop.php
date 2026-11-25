@@ -32,6 +32,9 @@ final class SelectEventLoop implements EventLoopInterface
     /** @var array<int|string, LoopTimer> */
     private array $timers = [];
 
+    // Null means empty or invalidated; recompute only after removing an earliest timer.
+    private ?float $nextDueAtMs = null;
+
     /** @var list<callable(): void> */
     private array $deferred = [];
 
@@ -112,8 +115,14 @@ final class SelectEventLoop implements EventLoopInterface
             $callback,
             function (LoopTimer $timer): void {
                 unset($this->timers[$timer->id]);
+                if ($this->nextDueAtMs === $timer->dueAtMs) {
+                    $this->nextDueAtMs = null;
+                }
             },
         );
+        if ($this->timers === [] || ($this->nextDueAtMs !== null && $timer->dueAtMs < $this->nextDueAtMs)) {
+            $this->nextDueAtMs = $timer->dueAtMs;
+        }
         $this->timers[$id] = $timer;
 
         return $timer;
@@ -206,13 +215,16 @@ final class SelectEventLoop implements EventLoopInterface
     private function runDueTimers(): void
     {
         $now = $this->clock->nowMilliseconds();
+        $dueAt = $this->earliestDeadline();
+        if ($dueAt === null || $dueAt > $now) {
+            return;
+        }
 
         foreach ($this->timers as $timer) {
             if (!$timer->enabled || $timer->dueAtMs > $now) {
                 continue;
             }
 
-            unset($this->timers[$timer->id]);
             $timer->invoke();
 
             if (!$this->running) {
@@ -241,11 +253,7 @@ final class SelectEventLoop implements EventLoopInterface
         }
 
         $now = $this->clock->nowMilliseconds();
-        $dueAt = null;
-
-        foreach ($this->timers as $timer) {
-            $dueAt = $dueAt === null ? $timer->dueAtMs : min($dueAt, $timer->dueAtMs);
-        }
+        $dueAt = $this->earliestDeadline();
 
         if ($dueAt === null) {
             return $this->idleTimeoutUsec;
@@ -254,6 +262,21 @@ final class SelectEventLoop implements EventLoopInterface
         $timerTimeoutUsec = max(0, (int) (($dueAt - $now) * 1000));
 
         return min($this->idleTimeoutUsec, $timerTimeoutUsec);
+    }
+
+    private function earliestDeadline(): ?float
+    {
+        if ($this->nextDueAtMs !== null || $this->timers === []) {
+            return $this->nextDueAtMs;
+        }
+
+        foreach ($this->timers as $timer) {
+            $this->nextDueAtMs = $this->nextDueAtMs === null
+                ? $timer->dueAtMs
+                : min($this->nextDueAtMs, $timer->dueAtMs);
+        }
+
+        return $this->nextDueAtMs;
     }
 
     private function dispatchSelection(SocketSelectionInterface $selection): void

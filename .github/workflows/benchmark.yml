@@ -63,7 +63,9 @@ jobs:
           filter='ConnectionLifecycleBench|ConnectionBench|HandshakeBench|FrameCodecBench'
           export WEBSOCKET_BENCH_SOURCE="$RUNNER_TEMP/checkpoint/src"
           vendor/bin/phpbench run --group=comparative --filter="$filter" --tag=checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/checkpoint.txt"
+          vendor/bin/phpbench run --group=checkpoint-runtime --tag=deadline_checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/deadline-checkpoint.txt"
           export WEBSOCKET_BENCH_SOURCE="$PWD/src"
+          vendor/bin/phpbench run --group=checkpoint-runtime --tag=deadline_head --ref=deadline_checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/deadline-comparison.txt"
           vendor/bin/phpbench run --group=comparative --filter="$filter" --tag=checkpoint_head --ref=checkpoint --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/checkpoint-comparison.txt"
           vendor/bin/phpbench run --group=runtime --tag=runtime --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/runtime.txt"
           vendor/bin/phpbench run --group=network --tag=network --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/network.txt"
