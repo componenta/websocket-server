@@ -37,8 +37,19 @@ def frame(opcode, payload=b"", final=True):
 
 
 class Client:
-    def __init__(self, address):
-        self.sock = socket.create_connection(address, timeout=5)
+    def __init__(self, address, receive_buffer=None):
+        if receive_buffer is None:
+            self.sock = socket.create_connection(address, timeout=5)
+        else:
+            # Limit the receive window before the TCP handshake.
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
+                self.sock.settimeout(5)
+                self.sock.connect(address)
+            except BaseException:
+                self.sock.close()
+                raise
         self.reader = self.sock.makefile("rb")
         try:
             host, port = address
@@ -109,6 +120,8 @@ def run(seconds, php):
     with tempfile.TemporaryDirectory(prefix="websocket-stress-") as tmp:
         stats_path = Path(tmp) / "stats.json"
         env = os.environ.copy()
+        # Acceptance must always exercise this checkout, not a benchmark source.
+        env.pop("WEBSOCKET_BENCH_SOURCE", None)
         env["WEBSOCKET_STRESS_STATS"] = str(stats_path)
         with (Path(tmp) / "server.log").open("w+") as errors:
             process = subprocess.Popen(
@@ -168,6 +181,31 @@ def run(seconds, php):
                     persistent[0].receive(1, b"barrier")
                     messages += 1
 
+                # A deliberately slow receiver queues up to 3 MiB of binary
+                # echoes without reading. Healthy connections must still make
+                # progress, and draining must recover exact message order.
+                # The workload stays below the per-connection 4 MiB limit.
+                slow = Client(address, receive_buffer=65_536)
+                churn.append(slow)
+                connected += 1
+                slow_payloads = [
+                    struct.pack("!I", i) + bytes([i]) * (524_288 - 4)
+                    for i in range(6)
+                ]
+                for i, payload in enumerate(slow_payloads):
+                    slow.send(2, payload)
+                    barrier = b"slow-reader:" + struct.pack("!I", i)
+                    healthy = persistent[i % len(persistent)]
+                    healthy.send(1, barrier)
+                    healthy.receive(1, barrier)
+                    messages += 2
+                for payload in slow_payloads:
+                    slow.receive(2, payload)
+                slow.close()
+                clean += 1
+                churn.clear()
+                del slow_payloads
+
                 for i in range(5):
                     cycle(i)
                 warm = process_sample(process.pid)
@@ -210,6 +248,8 @@ def run(seconds, php):
                 result = {
                     "duration_seconds": round(elapsed, 3), "measured_cycles": cycles,
                     "persistent_connections": 64, "churn_per_cycle": 16, "warmup_cycles": 5,
+                    "slow_reader": {"echo_messages": 6, "payload_bytes": 3 * 1024 * 1024,
+                                    "healthy_barriers": 6},
                     "idle": idle, "after_warmup": warm, "final": final,
                     "sampled_peak_rss_kib": peak, "sampled_peak_fds": peak_fds,
                     "server": actual,

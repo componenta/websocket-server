@@ -2,6 +2,17 @@ name: TCP stress
 
 on:
   workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Minimum duration after warmup (seconds)'
+        type: choice
+        required: true
+        default: '60'
+        options:
+          - '60'
+          - '600'
+          - '3600'
+          - '7200'
   push:
     paths:
       - 'src/**'
@@ -27,7 +38,7 @@ concurrency:
 jobs:
   stress:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.seconds == '7200' && 130 || github.event_name == 'workflow_dispatch' && inputs.seconds == '3600' && 70 || github.event_name == 'workflow_dispatch' && inputs.seconds == '600' && 18 || 8 }}
     strategy:
       fail-fast: false
       matrix:
@@ -43,9 +54,15 @@ jobs:
       - run: composer install --no-interaction --prefer-dist
       - name: Exercise sustained loopback sessions and churn
         shell: bash
+        env:
+          STRESS_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.seconds || '60' }}
         run: |
           set -euo pipefail
-          python3 tests/Stress/run.py --seconds=60 | tee "$RUNNER_TEMP/stress.json"
+          case "$STRESS_SECONDS" in
+            60|600|3600|7200) ;;
+            *) exit 2 ;;
+          esac
+          python3 tests/Stress/run.py --seconds="$STRESS_SECONDS" | tee "$RUNNER_TEMP/stress.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
