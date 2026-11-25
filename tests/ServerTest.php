@@ -1285,4 +1285,54 @@ describe('WebSocket server', function () {
             ->and($wire)->toBe('');
     });
 
+    it('isolates a connection that exhausts the shared incoming buffer budget', function () {
+        $clock = new ServerBackpressureClock();
+        $options = new WebSocketOptions(
+            heartbeatIntervalMs: 0, shutdownDrainTimeoutMs: 0, selectTimeoutUsec: 0,
+            maxTotalIncomingBufferSize: 24,
+        );
+        $codec = new FrameCodec();
+        $a = new ServerScriptedSocket('a', '127.0.0.1:10001', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, $codec->encode(new Frame(Opcode::BINARY, str_repeat('a', 16), false), true, 'mask')),
+            new SocketReadResult(SocketReadStatus::DATA, $codec->encode(new Frame(Opcode::CONTINUATION), true, 'mask')),
+        ]);
+        $b = new ServerScriptedSocket('b', '127.0.0.1:10002', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'blocked')),
+        ]);
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server($options, new ServerBackpressureListenerFactory(new ServerQueueListener('listener', $a, $b)),
+            $loop, new Handshake($options), new ConnectionFactory($codec, $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock);
+        $application = new class implements WebSocketApplicationInterface {
+            public array $messages = [];
+            public array $closes = [];
+            public array $errors = [];
+            public function connected(ConnectionInterface $connection): void {}
+            public function received(ConnectionInterface $connection, Message $message): void
+            {
+                $this->messages[$connection->remoteAddress] = $message->payload;
+            }
+            public function disconnected(ConnectionInterface $connection, CloseInfo $close): void
+            {
+                $this->closes[$connection->remoteAddress] = $close;
+            }
+            public function failed(WebSocketErrorContextInterface $context): void
+            {
+                $this->errors[] = $context;
+            }
+        };
+        $loop->delay(100, fn () => $server->stop());
+
+        $server->run($application);
+
+        expect($application->messages)->toBe(['127.0.0.1:10001' => str_repeat('a', 16)])
+            ->and($application->closes['127.0.0.1:10002']->code)->toBe(CloseCode::PAYLOAD_TOO_LARGE)
+            ->and($application->errors)->toHaveCount(1)
+            ->and($application->errors[0]->connection?->remoteAddress)->toBe('127.0.0.1:10002')
+            ->and($a->closed)->toBeTrue()
+            ->and($b->closed)->toBeTrue();
+    });
+
 });
