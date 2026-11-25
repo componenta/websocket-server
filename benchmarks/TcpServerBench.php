@@ -155,7 +155,7 @@ final class TcpServerBench
             }
 
             if (!str_starts_with($headers, "HTTP/1.1 101 ")
-                || !str_contains(strtolower($headers), "\r\nsec-websocket-accept: s3pplmbitxaq9kygzzhzrbk+xoo=\r\n")
+                || preg_match('/\r\n(?i:sec-websocket-accept):[ \t]*s3pPLMBiTxaQ9kYGzzhZRbK\+xOo=\r\n/', $headers) !== 1
             ) {
                 throw new \RuntimeException('Unexpected handshake response.');
             }
