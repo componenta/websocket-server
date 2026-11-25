@@ -944,7 +944,7 @@ describe('WebSocket server', function () {
 
         $server->run($application);
 
-        expect($socket->written)->toContain("\x89\x00")
+        expect($socket->written)->toContain("\x89\x08")
             ->and($application->connected)->toBe(1)
             ->and($application->disconnected)->toBe(1)
             ->and($application->lastClose?->clean)->toBeFalse()

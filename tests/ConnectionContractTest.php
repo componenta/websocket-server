@@ -362,4 +362,29 @@ describe('WebSocket connection contract', function () {
             ->and($binary->accepted)->toBeTrue();
         $connection->socket->close();
     });
+
+    it('only acknowledges a fully written ping with a matching pong payload', function () {
+        $connection = contractTestConnection();
+        $codec = new FrameCodec();
+        $matching = $codec->encode(new Frame(Opcode::PONG, 'token'), true, 'mask');
+        $different = $codec->encode(new Frame(Opcode::PONG, 'wrong'), true, 'mask');
+
+        $connection->ping('token');
+        expect($connection->awaitingPong)->toBeTrue()
+            ->and($connection->pingSent)->toBeFalse();
+
+        $connection->appendBytes($matching);
+        expect($connection->awaitingPong)->toBeTrue();
+
+        $connection->flush();
+        expect($connection->pingSent)->toBeTrue();
+
+        $connection->appendBytes($different);
+        expect($connection->awaitingPong)->toBeTrue();
+
+        $connection->appendBytes($matching);
+        expect($connection->awaitingPong)->toBeFalse()
+            ->and($connection->pingSent)->toBeFalse();
+        $connection->socket->close();
+    });
 });

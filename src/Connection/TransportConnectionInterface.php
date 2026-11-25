@@ -33,6 +33,12 @@ interface TransportConnectionInterface extends ConnectionInterface
 
     public int $receivedPongs { get; }
 
+    /** A ping is queued or sent and has not received a matching pong. */
+    public bool $awaitingPong { get; }
+
+    /** The outstanding ping has been completely written to the socket. */
+    public bool $pingSent { get; }
+
     /**
      * @return list<Message>
      */

@@ -43,6 +43,9 @@ final class Server implements WebSocketServerInterface
     /** @var array<int|string, float> */
     private array $awaitingPongSince = [];
 
+    /** @var array<int|string, float> */
+    private array $queuedPingSince = [];
+
     /** @var array<int|string, LoopTimerInterface> */
     private array $closeTimers = [];
 
@@ -73,6 +76,7 @@ final class Server implements WebSocketServerInterface
         $lifecycleTimer = null;
         $this->lastActivityAt = [];
         $this->awaitingPongSince = [];
+        $this->queuedPingSince = [];
         $this->closeTimers = [];
         $this->running = true;
 
@@ -126,6 +130,7 @@ final class Server implements WebSocketServerInterface
 
             $this->lastActivityAt = [];
             $this->awaitingPongSince = [];
+            $this->queuedPingSince = [];
             $listener->close();
         }
     }
@@ -218,6 +223,16 @@ final class Server implements WebSocketServerInterface
             $lastActivityAt = $this->lastActivityAt[$id] ?? $now;
             $idleMs = $now - $lastActivityAt;
 
+            if (isset($this->queuedPingSince[$id])
+                && $now - $this->queuedPingSince[$id] >= $this->options->pongTimeoutMs
+            ) {
+                $this->closeConnection(
+                    $connection, $connections, $readWatchers, $writeWatchers, $application,
+                    CloseInfo::transport('WebSocket ping write timeout.'),
+                );
+                continue;
+            }
+
             if ($this->options->pongTimeoutMs > 0
                 && isset($this->awaitingPongSince[$id])
                 && $now - $this->awaitingPongSince[$id] >= $this->options->pongTimeoutMs
@@ -252,13 +267,13 @@ final class Server implements WebSocketServerInterface
 
             if ($this->options->heartbeatIntervalMs < 1
                 || $idleMs < $this->options->heartbeatIntervalMs
-                || isset($this->awaitingPongSince[$id])
+                || $connection->awaitingPong
                 || $connection->closing
             ) {
                 continue;
             }
 
-            $result = $connection->ping();
+            $result = $connection->ping(random_bytes(8));
 
             if (!$result->accepted) {
                 $this->closeConnection(
@@ -272,7 +287,7 @@ final class Server implements WebSocketServerInterface
                 continue;
             }
 
-            $this->awaitingPongSince[$id] = $now;
+            $this->queuedPingSince[$id] = $now;
             $this->flushOrWatchConnection($connection, $connections, $readWatchers, $writeWatchers, $application);
         }
     }
@@ -728,7 +743,7 @@ final class Server implements WebSocketServerInterface
             closeSocket: false,
         );
         $this->lastActivityAt[$accepted->socket->id] = $this->nowMs();
-        unset($this->awaitingPongSince[$accepted->socket->id]);
+        unset($this->awaitingPongSince[$accepted->socket->id], $this->queuedPingSince[$accepted->socket->id]);
         $connections[$accepted->socket->id] = $accepted;
         $readWatchers[$accepted->socket->id] = $this->loop->onReadable(
             $accepted->socket,
@@ -758,7 +773,7 @@ final class Server implements WebSocketServerInterface
                         );
                     },
                 );
-                unset($this->awaitingPongSince[$id]);
+                unset($this->awaitingPongSince[$id], $this->queuedPingSince[$id]);
             }
 
             $this->ensureWriteWatcher($accepted, $connections, $readWatchers, $writeWatchers, $application);
@@ -840,7 +855,6 @@ final class Server implements WebSocketServerInterface
             return;
         }
 
-        $pongCount = $connection->receivedPongs;
         $this->lastActivityAt[$connection->socket->id] = $this->nowMs();
 
         try {
@@ -868,8 +882,8 @@ final class Server implements WebSocketServerInterface
             return;
         }
 
-        if ($connection->receivedPongs > $pongCount) {
-            unset($this->awaitingPongSince[$connection->socket->id]);
+        if (!$connection->awaitingPong) {
+            unset($this->awaitingPongSince[$id], $this->queuedPingSince[$id]);
         }
 
         foreach ($messages as $message) {
@@ -1070,6 +1084,11 @@ final class Server implements WebSocketServerInterface
             return;
         }
 
+        if ($connection->pingSent && isset($this->queuedPingSince[$id])) {
+            unset($this->queuedPingSince[$id]);
+            $this->awaitingPongSince[$id] = $this->nowMs();
+        }
+
         if (!$connection->needsWrite) {
             ($writeWatchers[$id] ?? null)?->cancel();
             unset($writeWatchers[$id]);
@@ -1182,7 +1201,7 @@ final class Server implements WebSocketServerInterface
         ($readWatchers[$id] ?? null)?->cancel();
         ($writeWatchers[$id] ?? null)?->cancel();
         unset($readWatchers[$id], $writeWatchers[$id], $connections[$id]);
-        unset($this->lastActivityAt[$id], $this->awaitingPongSince[$id]);
+        unset($this->lastActivityAt[$id], $this->awaitingPongSince[$id], $this->queuedPingSince[$id]);
 
         $connection->markClosed($close);
         $connection->socket->close();

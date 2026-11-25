@@ -26,6 +26,16 @@ final class Connection implements TransportConnectionInterface
     private ?ConnectionInterface $applicationHandle = null;
     private bool $peerCloseReceived = false;
     private bool $protocolFailed = false;
+    private ?string $pendingPingPayload = null;
+    private int $pendingPingBytes = 0;
+
+    public bool $awaitingPong {
+        get => $this->pendingPingPayload !== null;
+    }
+
+    public bool $pingSent {
+        get => $this->awaitingPong && $this->pendingPingBytes === 0;
+    }
 
     /** A complete closing handshake, or a flushed failure close. */
     public bool $readyToClose {
@@ -143,7 +153,18 @@ final class Connection implements TransportConnectionInterface
             throw new \InvalidArgumentException('WebSocket ping payload must be at most 125 bytes.');
         }
 
-        return $this->queue(new Frame(Opcode::PING, $payload));
+        if ($this->awaitingPong) {
+            return SendResult::rejected('A WebSocket ping is already outstanding.', $this->queuedBytes);
+        }
+
+        $result = $this->queue(new Frame(Opcode::PING, $payload), notify: false);
+        if ($result->accepted) {
+            $this->pendingPingPayload = $payload;
+            $this->pendingPingBytes = $this->queuedBytes;
+            $this->notifyWrite();
+        }
+
+        return $result;
     }
 
     public function flush(): bool
@@ -159,7 +180,9 @@ final class Connection implements TransportConnectionInterface
         }
 
         if ($written->writtenBytes > 0) {
-            $this->outgoingOffset += min($written->writtenBytes, $this->queuedBytes);
+            $bytes = min($written->writtenBytes, $this->queuedBytes);
+            $this->outgoingOffset += $bytes;
+            $this->pendingPingBytes = max(0, $this->pendingPingBytes - $bytes);
 
             if (!$this->needsWrite) {
                 $this->resetOutgoingBuffer();
@@ -199,6 +222,8 @@ final class Connection implements TransportConnectionInterface
         $this->state = ConnectionState::CLOSED;
         $this->closeInfo = $info->withClean($clean);
         $this->writeNotifier = null;
+        $this->pendingPingPayload = null;
+        $this->pendingPingBytes = 0;
         $this->buffer = '';
         $this->resetOutgoingBuffer();
         $this->assembler->reset();
@@ -211,7 +236,7 @@ final class Connection implements TransportConnectionInterface
             Opcode::BINARY,
             Opcode::CONTINUATION => $this->closing ? null : $this->assembler->push($frame),
             Opcode::PING => $this->handlePingFrame($frame),
-            Opcode::PONG => $this->handlePongFrame(),
+            Opcode::PONG => $this->handlePongFrame($frame),
             Opcode::CLOSE => $this->handleCloseFrame($frame),
         };
     }
@@ -227,9 +252,13 @@ final class Connection implements TransportConnectionInterface
         return null;
     }
 
-    private function handlePongFrame(): ?Message
+    private function handlePongFrame(Frame $frame): ?Message
     {
         $this->receivedPongs++;
+
+        if ($this->pingSent && $frame->payload === $this->pendingPingPayload) {
+            $this->pendingPingPayload = null;
+        }
 
         return null;
     }
