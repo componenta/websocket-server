@@ -35,6 +35,7 @@ final class ConnectionLifecycleBench
         try {
             if (!$connection->sendText('hello')->accepted || !$connection->flush()
                 || $socket->written !== 7 || !$connection->close()->accepted
+                || !$connection->flush() || $socket->written !== 11
             ) {
                 throw new \RuntimeException('Connection lifecycle failed.');
             }
