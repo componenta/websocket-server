@@ -284,4 +284,58 @@ describe('Stream socket lifecycle', function () {
         }
     });
 
+
+    it('returns a typed write error for a broken pipe with a caller notice handler installed', function () {
+        $resources = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        expect($resources)->not->toBeFalse();
+        $socket = new StreamSocket($resources[0], 'local');
+        fclose($resources[1]);
+
+        set_error_handler(static function (int $level, string $message): never {
+            throw new ErrorException($message, 0, $level);
+        }, E_NOTICE | E_WARNING | E_USER_WARNING);
+        try {
+            $result = $socket->write('hello');
+            expect($result->status)->toBe(SocketWriteStatus::ERROR)
+                ->and($result->writtenBytes)->toBe(0)
+                ->and($result->reason)->not->toBeNull();
+            expect(fn () => trigger_error('caller warning handler', E_USER_WARNING))
+                ->toThrow(ErrorException::class, 'caller warning handler');
+        } finally {
+            restore_error_handler();
+            $socket->close();
+        }
+    });
+
+    it('returns a typed read error when the native stream emits a notice', function () {
+        $path = tempnam(sys_get_temp_dir(), 'ws-read-error-');
+        expect($path)->toBeString();
+        $resource = null;
+        $socket = null;
+        try {
+            $resource = fopen($path, 'wb');
+            expect(is_resource($resource))->toBeTrue();
+            $socket = new StreamSocket($resource, 'local');
+            set_error_handler(static function (int $level, string $message): never {
+                throw new ErrorException($message, 0, $level);
+            }, E_NOTICE | E_WARNING | E_USER_WARNING);
+            try {
+                $result = $socket->read(16);
+                expect($result->status)->toBe(SocketReadStatus::ERROR)
+                    ->and($result->bytes)->toBe('')
+                    ->and($result->reason)->not->toBeNull();
+                expect(fn () => trigger_error('caller warning handler', E_USER_WARNING))
+                    ->toThrow(ErrorException::class, 'caller warning handler');
+            } finally {
+                restore_error_handler();
+            }
+        } finally {
+            $socket?->close();
+            if (is_resource($resource)) {
+                fclose($resource);
+            }
+            unlink($path);
+        }
+    });
+
 });

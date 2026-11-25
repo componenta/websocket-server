@@ -1689,4 +1689,86 @@ describe('WebSocket server', function () {
             ->and($application->errors)->toBe([]);
     });
 
+
+    it('reports read errors during shutdown and continues draining the other sessions', function (bool $error) {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, selectTimeoutUsec: 0, shutdownDrainTimeoutMs: 100);
+        $a = new ServerScriptedSocket('a', 'client-a', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'stop')),
+            $error ? new SocketReadResult(SocketReadStatus::ERROR, reason: 'shutdown read failed')
+                : new SocketReadResult(SocketReadStatus::CLOSED),
+        ]);
+        $b = new ServerScriptedSocket('b', 'client-b', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::CLOSE, pack('n', CloseCode::GOING_AWAY))),
+        ]);
+        $listener = new ServerQueueListener('listener', $a, $b);
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server($options, new ServerBackpressureListenerFactory($listener), $loop,
+            new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock);
+        $application = new ServerRuntimeApplication(stopOnReceived: true);
+        $application->server = $server;
+        $loop->delay(200, fn () => $server->stop());
+
+        $server->run($application);
+
+        expect($application->connected)->toBe(2)
+            ->and($application->received)->toBe(1)
+            ->and($application->disconnected)->toBe(2)
+            ->and($a->closed)->toBeTrue()
+            ->and($b->closed)->toBeTrue()
+            ->and($listener->closed)->toBeTrue()
+            ->and($application->lastClose?->clean)->toBeTrue()
+            ->and($application->errors)->toHaveCount($error ? 1 : 0);
+        if ($error) {
+            expect($application->errors[0]->phase)->toBe(WebSocketErrorPhase::SHUTDOWN)
+                ->and($application->errors[0]->error->getMessage())->toBe('shutdown read failed')
+                ->and($application->errors[0]->connection?->remoteAddress)->toBe('client-a');
+        }
+    })->with(['I/O failure' => true, 'ordinary EOF' => false]);
+
+    it('isolates an error context factory failure from other active connections', function () {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, selectTimeoutUsec: 0, shutdownDrainTimeoutMs: 0);
+        $a = new ServerScriptedSocket('a', 'client-a', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::ERROR, reason: 'read failed'),
+        ]);
+        $b = new ServerScriptedSocket('b', 'client-b', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'still running')),
+        ]);
+        $factory = new class implements \Componenta\WebSocket\Application\Error\WebSocketErrorContextFactoryInterface {
+            public int $failedAttempts = 0;
+            public function create(WebSocketErrorPhase $phase, ?ConnectionInterface $connection, Throwable $error): WebSocketErrorContextInterface
+            {
+                if ($phase === WebSocketErrorPhase::READ) {
+                    $this->failedAttempts++;
+                    throw new RuntimeException('error reporting failed');
+                }
+                return (new WebSocketErrorContextFactory())->create($phase, $connection, $error);
+            }
+        };
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $listener = new ServerQueueListener('listener', $a, $b);
+        $server = new Server($options, new ServerBackpressureListenerFactory($listener), $loop,
+            new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), $factory, $clock);
+        $application = new ServerRuntimeApplication(stopOnReceived: true);
+        $application->server = $server;
+        $loop->delay(200, fn () => $server->stop());
+
+        $server->run($application);
+
+        expect($factory->failedAttempts)->toBe(1)
+            ->and($application->connected)->toBe(2)
+            ->and($application->received)->toBe(1)
+            ->and($application->disconnected)->toBe(2)
+            ->and($application->errors)->toBe([])
+            ->and($a->closed)->toBeTrue()
+            ->and($b->closed)->toBeTrue();
+    });
+
 });
