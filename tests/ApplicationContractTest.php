@@ -76,4 +76,28 @@ describe('WebSocket application contracts', function () {
 
         $connection->socket->close();
     });
+    it('rejects a non-callable message router at construction rather than on first dispatch', function () {
+        expect(fn () => new Componenta\WebSocket\Application\CallableMessageRouter('nonexistent_callable_for_websocket_test'))
+            ->toThrow(TypeError::class);
+    });
+
+    it('dispatches messages through a valid callable router', function () {
+        $received = [];
+        $router = new Componenta\WebSocket\Application\CallableMessageRouter(
+            static function (ConnectionInterface $connection, Message $message) use (&$received): void {
+                $received[] = [$connection->id, $message->payload];
+            },
+        );
+        $connection = webSocketTestConnection('callable');
+
+        try {
+            $router->route($connection->application, new Message(Opcode::TEXT, 'hello'));
+
+            expect($received)->toBe([['callable', 'hello']]);
+        } finally {
+            $connection->markClosed();
+            $connection->socket->close();
+        }
+    });
+
 });

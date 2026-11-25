@@ -534,4 +534,31 @@ describe('WebSocket connection contract', function () {
         }
     });
 
+    it('preserves numeric-string context keys when adding, replacing and removing attributes', function () {
+        $original = new ConnectionContext(['42' => 'forty two', 'label' => 'old']);
+        $added = $original->with('other', true);
+        $changed = $added->with('42', 'changed');
+        $removed = $changed->without('42');
+
+        expect($original->get('42'))->toBe('forty two')
+            ->and($added->get('42'))->toBe('forty two')
+            ->and($added->has('0'))->toBeFalse()
+            ->and($changed->get('42'))->toBe('changed')
+            ->and($changed->toArray())->toBe([42 => 'changed', 'label' => 'old', 'other' => true])
+            ->and($removed->has('42'))->toBeFalse()
+            ->and($removed->get('other'))->toBeTrue();
+    });
+
+    it('does not retain direct PHP references to context entries or export them', function () {
+        $value = 42;
+        $context = new ConnectionContext(['actor' => &$value]);
+        $value = 99;
+        $export = $context->toArray();
+        $export['actor'] = 17;
+
+        expect($context->get('actor'))->toBe(42)
+            ->and($value)->toBe(99)
+            ->and($context->with('other', true)->get('actor'))->toBe(42);
+    });
+
 });

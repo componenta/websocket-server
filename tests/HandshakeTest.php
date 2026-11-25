@@ -117,4 +117,27 @@ describe('WebSocket handshake', function () {
         expect((new Handshake(new WebSocketOptions()))->accept($request)->accepted)->toBeTrue();
     });
 
+    it('advertises the allowed method on HTTP 405 responses', function () {
+        $response = (new Handshake(new WebSocketOptions()))->accept(
+            str_replace('GET /ws', 'POST /ws', webSocketHandshakeRequest()),
+        );
+
+        expect($response->accepted)->toBeFalse()
+            ->and($response->status)->toBe(405)
+            ->and(strtolower($response->response))->toContain("\r\nallow: get\r\n");
+    });
+
+    it('advertises the supported upgrade and version on HTTP 426 responses', function () {
+        $response = (new Handshake(new WebSocketOptions()))->accept(
+            webSocketHandshakeRequest(headers: [Header::SEC_WEBSOCKET_VERSION => '12']),
+        );
+
+        $wire = strtolower($response->response);
+        expect($response->accepted)->toBeFalse()
+            ->and($response->status)->toBe(426)
+            ->and($wire)->toContain("\r\nupgrade: websocket\r\n")
+            ->and($wire)->toContain("\r\nsec-websocket-version: 13\r\n")
+            ->and(preg_match('/\r\nconnection: [^\r\n]*\bupgrade\b[^\r\n]*\r\n/', $wire))->toBe(1);
+    });
+
 });
