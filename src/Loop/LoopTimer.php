@@ -44,4 +44,6 @@ final class LoopTimer implements LoopTimerInterface
         $this->cancel();
         $callback?->__invoke();
     }
+
+    private function __clone(): void {}
 }

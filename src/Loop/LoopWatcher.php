@@ -39,4 +39,6 @@ final class LoopWatcher implements LoopWatcherInterface
             $this->callback?->__invoke();
         }
     }
+
+    private function __clone(): void {}
 }

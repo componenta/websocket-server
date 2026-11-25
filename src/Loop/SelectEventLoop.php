@@ -259,9 +259,14 @@ final class SelectEventLoop implements EventLoopInterface
             return $this->idleTimeoutUsec;
         }
 
-        $timerTimeoutUsec = max(0, (int) (($dueAt - $now) * 1000));
+        // Clamp before converting to int: a far-future deadline can exceed
+        // the representable microsecond range even with a valid delay.
+        $timerTimeoutUsec = ($dueAt - $now) * 1000;
+        if ($timerTimeoutUsec >= $this->idleTimeoutUsec) {
+            return $this->idleTimeoutUsec;
+        }
 
-        return min($this->idleTimeoutUsec, $timerTimeoutUsec);
+        return (int) max(0.0, $timerTimeoutUsec);
     }
 
     private function earliestDeadline(): ?float
@@ -321,4 +326,5 @@ final class SelectEventLoop implements EventLoopInterface
         }
     }
 
+    private function __clone(): void {}
 }
