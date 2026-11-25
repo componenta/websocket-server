@@ -1495,4 +1495,28 @@ describe('WebSocket server', function () {
             ->and($socket->closed)->toBeTrue();
     });
 
+
+    it('does not stop an unrelated event loop when the server is not running', function () {
+        $clock = new ServerBackpressureClock();
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, selectTimeoutUsec: 0);
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server(
+            $options, new ServerBackpressureListenerFactory(new ServerQueueListener('unused')),
+            $loop, new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock,
+        );
+        $calls = [];
+        $loop->defer(function () use ($server, &$calls): void {
+            $calls[] = 'stop inactive server';
+            $server->stop();
+        });
+        $loop->defer(function () use (&$calls): void {
+            $calls[] = 'unrelated task';
+        });
+
+        $loop->run();
+
+        expect($calls)->toBe(['stop inactive server', 'unrelated task']);
+    });
+
 });

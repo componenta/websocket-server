@@ -63,4 +63,38 @@ describe('Stream socket lifecycle', function () {
         }
     });
 
+
+    it('binds IPv6 listeners with either raw or bracketed host addresses', function (string $host) {
+        $probe = @stream_socket_server('tcp://[::1]:0', $errno, $error);
+        if (!is_resource($probe)) {
+            $this->markTestSkipped('IPv6 loopback unavailable: ' . $error);
+        }
+        $address = stream_socket_get_name($probe, false);
+        fclose($probe);
+        expect($address)->toBeString();
+        $port = (int) substr(strrchr($address, ':'), 1);
+        $factory = new Componenta\WebSocket\Socket\StreamSocketListenerFactory();
+        $listener = $factory->listen(new Componenta\WebSocket\Config\WebSocketOptions(host: $host, port: $port));
+        $client = null;
+        $accepted = null;
+
+        try {
+            $client = stream_socket_client('tcp://[::1]:' . $port, $errno, $error, 1);
+            expect(is_resource($client))->toBeTrue();
+            stream_set_timeout($client, 1);
+            $selector = new Componenta\WebSocket\Socket\StreamSocketSelector();
+            expect($selector->select([$listener], [], [], 1_000_000)->canReadListener($listener))->toBeTrue();
+            $accepted = $listener->accept();
+            expect($accepted)->toBeInstanceOf(Componenta\WebSocket\Socket\SocketInterface::class);
+            expect($accepted->write('ipv6')->writtenBytes)->toBe(4)
+                ->and(fread($client, 4))->toBe('ipv6');
+        } finally {
+            $accepted?->close();
+            if (is_resource($client)) {
+                fclose($client);
+            }
+            $listener->close();
+        }
+    })->with(['::1', '[::1]']);
+
 });
