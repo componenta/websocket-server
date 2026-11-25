@@ -611,7 +611,7 @@ describe('WebSocket connection contract', function () {
         try {
             $send('small');
             $drain();
-            $send(str_repeat('a', 65_526)); // Header plus payload crosses the single-chunk boundary.
+            $send(str_repeat('a', 65_526)); // Nearly fills the first chunk before a partial write.
             $connection->flush();
             $send(str_repeat('b', 65_532));
             $socket->writeLimit = 0;

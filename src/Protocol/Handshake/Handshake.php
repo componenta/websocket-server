@@ -95,27 +95,23 @@ final readonly class Handshake implements HandshakeInterface
                 continue;
             }
 
-            $separator = strpos($line, ':');
-
-            if ($separator === false) {
+            // Validate the complete field once, before case normalization or OWS trimming.
+            if (preg_match('/^([!#$%&\'*+.^_\x60|~0-9A-Za-z-]+):([\x09\x20-\x7e\x80-\xff]*)\z/', $line, $field) !== 1) {
                 return null;
             }
 
-            $name = strtolower(substr($line, 0, $separator));
-            $value = trim(substr($line, $separator + 1), " \t");
+            $name = strtolower($field[1]);
+            $value = trim($field[2], " \t");
+            if (!isset($headers[$name])) {
+                $headers[$name] = $value;
+                continue;
+            }
 
-            if (!preg_match('/^[!#$%&\'*+.^_\x60|~0-9a-z-]+\z/', $name)
-                || preg_match('/[\x00-\x08\x0a-\x1f\x7f]/', $value)
-                || (isset($headers[$name]) && in_array($name, [
-                    'host', 'origin', 'sec-websocket-key', 'sec-websocket-version', 'content-length',
-                ], true))
-            ) {
+            if (in_array($name, ['host', 'origin', 'sec-websocket-key', 'sec-websocket-version', 'content-length'], true)) {
                 return null;
             }
 
-            $headers[$name] = isset($headers[$name])
-                ? $headers[$name] . ', ' . $value
-                : $value;
+            $headers[$name] .= ', ' . $value;
         }
 
         if (isset($headers['transfer-encoding'])
@@ -183,8 +179,12 @@ final readonly class Handshake implements HandshakeInterface
             return false;
         }
 
+        if (strcasecmp($value, $token) === 0) {
+            return true;
+        }
+
         foreach (explode(',', $value) as $part) {
-            if (strtolower(trim($part)) === strtolower($token)) {
+            if (strcasecmp(trim($part), $token) === 0) {
                 return true;
             }
         }

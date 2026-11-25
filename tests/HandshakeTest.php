@@ -140,4 +140,41 @@ describe('WebSocket handshake', function () {
             ->and(preg_match('/\r\nconnection: [^\r\n]*\bupgrade\b[^\r\n]*\r\n/', $wire))->toBe(1);
     });
 
+
+    it('preserves HTTP field grammar across every possible byte in names and values', function () {
+        $handshake = new Handshake(new WebSocketOptions());
+        $prefix = substr(webSocketHandshakeRequest(), 0, -2);
+        $token = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&'*+-.^_" . chr(96) . "|~";
+
+        for ($byte = 0; $byte <= 255; $byte++) {
+            $character = chr($byte);
+            $name = 'X' . $character . 'Test';
+            $response = $handshake->accept($prefix . $name . ": value\r\n\r\n");
+            // A colon in the proposed name is the actual field separator:
+            // "X:Test: value" is a valid X header, not an invalid field name.
+            $validName = str_contains($token, $character) || $character === ':';
+            expect($response->accepted)->toBe($validName, 'Field name byte ' . $byte);
+            if ($validName && $character !== ':') {
+                expect($response->request?->header($name))->toBe('value');
+            }
+
+            $response = $handshake->accept($prefix . "X-Test: a{$character}b\r\n\r\n");
+            $validValue = $byte === 9 || ($byte >= 32 && $byte !== 127);
+            expect($response->accepted)->toBe($validValue, 'Field value byte ' . $byte);
+            if ($validValue) {
+                expect($response->request?->header('X-Test'))->toBe('a' . $character . 'b');
+            }
+        }
+    });
+
+    it('combines repeated list fields and trims only HTTP optional whitespace', function () {
+        $prefix = substr(webSocketHandshakeRequest(), 0, -2);
+        $response = (new Handshake(new WebSocketOptions()))->accept(
+            $prefix . "X-List:\t first \t\r\nx-list: second\r\nX-Empty:\t \r\n\r\n",
+        );
+        expect($response->accepted)->toBeTrue()
+            ->and($response->request?->header('X-LIST'))->toBe('first, second')
+            ->and($response->request?->header('X-Empty'))->toBe('');
+    });
+
 });
