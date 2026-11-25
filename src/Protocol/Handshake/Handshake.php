@@ -71,7 +71,9 @@ final readonly class Handshake implements HandshakeInterface
     {
         $headerEnd = strpos($rawRequest, "\r\n\r\n");
 
-        if ($headerEnd === false) {
+        // This upgrade handler only supports a bodyless request. Never discard
+        // unparsed HTTP body or premature WebSocket bytes while switching protocols.
+        if ($headerEnd === false || $headerEnd + 4 !== strlen($rawRequest)) {
             return null;
         }
 
@@ -103,7 +105,7 @@ final readonly class Handshake implements HandshakeInterface
             if (!preg_match('/^[!#$%&\'*+.^_\x60|~0-9a-z-]+\z/', $name)
                 || preg_match('/[\x00-\x08\x0a-\x1f\x7f]/', $value)
                 || (isset($headers[$name]) && in_array($name, [
-                    'host', 'origin', 'sec-websocket-key', 'sec-websocket-version',
+                    'host', 'origin', 'sec-websocket-key', 'sec-websocket-version', 'content-length',
                 ], true))
             ) {
                 return null;
@@ -112,6 +114,12 @@ final readonly class Handshake implements HandshakeInterface
             $headers[$name] = isset($headers[$name])
                 ? $headers[$name] . ', ' . $value
                 : $value;
+        }
+
+        if (isset($headers['transfer-encoding'])
+            || (isset($headers['content-length']) && !preg_match('/^0+\z/', $headers['content-length']))
+        ) {
+            return null;
         }
 
         $host = $headers['host'] ?? '';

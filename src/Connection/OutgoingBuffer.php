@@ -81,4 +81,7 @@ final class OutgoingBuffer
         $this->offset = 0;
         $this->size = 0;
     }
+
+    private function __clone(): void {}
+
 }

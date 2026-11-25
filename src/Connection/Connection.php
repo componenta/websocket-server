@@ -396,4 +396,7 @@ final class Connection implements TransportConnectionInterface
     {
         return preg_match('//u', $value) === 1;
     }
+
+    private function __clone(): void {}
+
 }

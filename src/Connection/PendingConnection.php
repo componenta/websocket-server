@@ -65,4 +65,7 @@ final class PendingConnection implements PendingConnectionInterface
         return $nowMs - $this->acceptedAtMs >= $timeoutMs;
     }
 
+
+    private function __clone(): void {}
+
 }

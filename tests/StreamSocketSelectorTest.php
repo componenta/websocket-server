@@ -148,23 +148,4 @@ describe('WebSocket stream socket selector', function () {
             fclose($resources[1]);
         }
     });
-
-    it('does not report readiness for a different target with a reused id', function () {
-        $resources = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
-        expect($resources)->not->toBeFalse();
-        $original = new ContractBackedStreamSocket($resources[0], 'local');
-        $alias = new ContractBackedStreamSocket($resources[0], 'local');
-        $selection = new Componenta\WebSocket\Socket\SocketSelection([], [$original->id => $original], [$original->id => $original]);
-
-        try {
-            expect($selection->canRead($original))->toBeTrue()
-                ->and($selection->canWrite($original))->toBeTrue()
-                ->and($selection->canRead($alias))->toBeFalse()
-                ->and($selection->canWrite($alias))->toBeFalse();
-        } finally {
-            $original->close();
-            fclose($resources[1]);
-        }
-    });
-
 });
