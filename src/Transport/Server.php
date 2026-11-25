@@ -310,7 +310,11 @@ final class Server implements WebSocketServerInterface
         WebSocketApplicationInterface $application,
     ): void {
         try {
-            while (($socket = $listener->accept()) !== null) {
+            for ($accepted = 0; $accepted < 64 && $this->running; $accepted++) {
+                $socket = $listener->accept();
+                if ($socket === null) {
+                    break;
+                }
                 if (count($pending) >= $this->options->maxPendingConnections
                     || count($pending) + count($connections) >= $this->options->maxConnections
                 ) {
@@ -404,6 +408,11 @@ final class Server implements WebSocketServerInterface
         }
 
         try {
+            if ($connection->expired($this->clock->now(), $this->options->pendingHandshakeTimeoutMs)) {
+                $this->removePending($id, $pending, $pendingWatchers, $pendingWriteWatchers, $pendingResponses, closeSocket: true);
+                return;
+            }
+
             $read = $connection->socket->read(8192);
 
             if ($read->status === SocketReadStatus::ERROR || $read->status === SocketReadStatus::CLOSED) {
@@ -581,6 +590,11 @@ final class Server implements WebSocketServerInterface
         }
 
         try {
+            if ($connection->expired($this->clock->now(), $this->options->pendingHandshakeTimeoutMs)) {
+                $this->removePending($id, $pending, $pendingWatchers, $pendingWriteWatchers, $pendingResponses, closeSocket: true);
+                return;
+            }
+
             $flushed = $connection->flush();
         } catch (\Throwable $e) {
             $this->fail($application, WebSocketErrorPhase::WRITE, null, $e);

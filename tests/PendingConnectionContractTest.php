@@ -52,7 +52,7 @@ final class PendingConnectionWriteSocket implements SocketInterface
 }
 
 describe('WebSocket pending connection contract', function () {
-    it('tracks activity time and expires idle handshakes', function () {
+    it('tracks activity time without extending the absolute handshake deadline', function () {
         $acceptedAt = new DateTimeImmutable('2026-06-06 00:00:00.000000');
         $lastActivityAt = new DateTimeImmutable('2026-06-06 00:00:01.000000');
         $pending = new PendingConnection(
@@ -66,8 +66,9 @@ describe('WebSocket pending connection contract', function () {
 
         expect($pending->acceptedAt)->toBe($acceptedAt)
             ->and($pending->lastActivityAt)->toEqual(new DateTimeImmutable('2026-06-06 00:00:02.000000'))
-            ->and($pending->expired(new DateTimeImmutable('2026-06-06 00:00:02.500000'), 1000))->toBeFalse()
-            ->and($pending->expired(new DateTimeImmutable('2026-06-06 00:00:03.000000'), 1000))->toBeTrue();
+            ->and($pending->expired(new DateTimeImmutable('2026-06-06 00:00:02.500000'), 3000))->toBeFalse()
+            ->and($pending->expired(new DateTimeImmutable('2026-06-06 00:00:03.000000'), 3000))->toBeTrue()
+            ->and($pending->expired(new DateTimeImmutable('2026-06-06 00:00:02.000000'), 1000))->toBeTrue();
 
         $pending->socket->close();
     });

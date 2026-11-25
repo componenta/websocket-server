@@ -30,5 +30,6 @@ interface PendingConnectionInterface
 
     public function tooLarge(int $maxBytes = 8192): bool;
 
+    /** Whether the absolute deadline since acceptance has elapsed, irrespective of activity. */
     public function expired(\DateTimeImmutable $now, int $timeoutMs): bool;
 }

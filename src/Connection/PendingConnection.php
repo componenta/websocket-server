@@ -77,7 +77,7 @@ final class PendingConnection implements PendingConnectionInterface
 
     public function expired(\DateTimeImmutable $now, int $timeoutMs): bool
     {
-        $elapsedMs = ((float) $now->format('U.u') - (float) $this->lastActivityAt->format('U.u')) * 1000;
+        $elapsedMs = ((float) $now->format('U.u') - (float) $this->acceptedAt->format('U.u')) * 1000;
 
         return $elapsedMs >= $timeoutMs;
     }
