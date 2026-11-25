@@ -1134,4 +1134,41 @@ describe('WebSocket server', function () {
             ->and($socket->closed)->toBeTrue()
             ->and($application->errors)->toBe([]);
     });
+
+    it('rejects an unselectable socket without losing another admitted connection', function () {
+        $clock = new ServerBackpressureClock();
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, shutdownDrainTimeoutMs: 0, selectTimeoutUsec: 0);
+        $request = "GET /ws HTTP/1.1\r\nHost: example.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+        $bad = new ServerScriptedSocket('bad', '127.0.0.1:10001');
+        $good = new ServerScriptedSocket('good', '127.0.0.1:10002', [new SocketReadResult(SocketReadStatus::DATA, $request)]);
+        $listener = new ServerQueueListener('listener', $bad, $good);
+        $selector = new class implements SocketSelectorInterface {
+            public function assertSelectable(SocketInterface|SocketListenerInterface $target): void
+            {
+                if ($target->id === 'bad') {
+                    throw new RuntimeException('unselectable socket');
+                }
+            }
+            public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection
+            {
+                return (new ServerQueueSelector())->select($listeners, $read, $write, $timeoutUsec);
+            }
+        };
+        $server = new Server($options, new ServerBackpressureListenerFactory($listener),
+            new SelectEventLoop($selector, $clock, 0), new Handshake($options),
+            new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock);
+        $application = new ServerBackpressureApplication();
+        $application->server = $server;
+
+        $server->run($application);
+
+        expect($bad->closed)->toBeTrue()
+            ->and($good->closed)->toBeTrue()
+            ->and($application->connected)->toBe(1)
+            ->and($application->disconnected)->toBe(1)
+            ->and($application->errors)->toHaveCount(1)
+            ->and($application->errors[0]->phase)->toBe(WebSocketErrorPhase::ACCEPT)
+            ->and($good->written)->toContain('HTTP/1.1 101 Switching Protocols');
+    });
 });
