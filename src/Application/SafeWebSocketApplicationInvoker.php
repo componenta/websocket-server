@@ -24,12 +24,7 @@ final readonly class SafeWebSocketApplicationInvoker implements WebSocketApplica
             $application->connected($connection);
             return true;
         } catch (\Throwable $e) {
-            $connection->close(CloseCode::INTERNAL_ERROR, 'Internal server error');
-            $this->failed(
-                $application,
-                $this->errors->create(WebSocketErrorPhase::APPLICATION, $connection, $e),
-            );
-            return false;
+            return $this->applicationFailure($application, $connection, $e);
         }
     }
 
@@ -42,13 +37,28 @@ final readonly class SafeWebSocketApplicationInvoker implements WebSocketApplica
             $application->received($connection, $message);
             return true;
         } catch (\Throwable $e) {
-            $connection->close(CloseCode::INTERNAL_ERROR, 'Internal server error');
-            $this->failed(
-                $application,
-                $this->errors->create(WebSocketErrorPhase::APPLICATION, $connection, $e),
-            );
-            return false;
+            return $this->applicationFailure($application, $connection, $e);
         }
+    }
+
+    private function applicationFailure(
+        WebSocketApplicationInterface $application,
+        ConnectionInterface $connection,
+        \Throwable $error,
+    ): false {
+        $closeFailure = null;
+        try {
+            $connection->close(CloseCode::INTERNAL_ERROR, 'Internal server error');
+        } catch (\Throwable $failure) {
+            $closeFailure = $failure;
+        }
+
+        $this->failed($application, $this->errors->create(WebSocketErrorPhase::APPLICATION, $connection, $error));
+        if ($closeFailure !== null) {
+            $this->failed($application, $this->errors->create(WebSocketErrorPhase::WRITE, $connection, $closeFailure));
+        }
+
+        return false;
     }
 
     public function disconnected(

@@ -11,7 +11,7 @@ final class StreamSocket implements StreamSocketInterface
     }
 
     public bool $eof {
-        get => feof($this->resource);
+        get => !is_resource($this->resource) || feof($this->resource);
     }
 
     public function __construct(
@@ -23,6 +23,10 @@ final class StreamSocket implements StreamSocketInterface
 
     public function read(int $maxBytes): SocketReadResult
     {
+        if (!is_resource($this->resource)) {
+            return new SocketReadResult(SocketReadStatus::CLOSED);
+        }
+
         $bytes = @fread($this->resource, $maxBytes);
 
         if ($bytes === false) {
@@ -38,6 +42,10 @@ final class StreamSocket implements StreamSocketInterface
 
     public function write(string $bytes): SocketWriteResult
     {
+        if (!is_resource($this->resource)) {
+            return new SocketWriteResult(SocketWriteStatus::ERROR, reason: 'Socket is closed.');
+        }
+
         if ($bytes === '') {
             return new SocketWriteResult(SocketWriteStatus::WRITTEN);
         }
