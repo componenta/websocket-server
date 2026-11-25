@@ -271,10 +271,12 @@ final class Connection implements TransportConnectionInterface
             return;
         }
 
-        $retained = strlen($this->buffer) + $this->assembler->bufferedBytes;
-        if ($retained > $this->incomingReservedBytes) {
-            throw new \LogicException('Decoder or assembler retained more bytes than received.');
+        $buffered = $this->assembler->bufferedBytes;
+        $undecoded = strlen($this->buffer);
+        if ($buffered < 0 || $buffered > $this->incomingReservedBytes - $undecoded) {
+            throw new \LogicException('Invalid retained byte count reported by decoder or assembler.');
         }
+        $retained = $undecoded + $buffered;
 
         if ($retained !== $this->incomingReservedBytes) {
             $this->incomingBudget->release($this->incomingReservedBytes - $retained);

@@ -11,6 +11,9 @@ use Componenta\WebSocket\Protocol\Message;
 
 final readonly class WebSocketOptions implements WebSocketOptionsInterface
 {
+    /** @var list<string> */
+    public array $allowedOrigins;
+
     /**
      * @param list<string> $allowedOrigins
      */
@@ -18,7 +21,7 @@ final readonly class WebSocketOptions implements WebSocketOptionsInterface
         public string $host = '127.0.0.1',
         public int $port = 8080,
         public string $path = '/ws',
-        public array $allowedOrigins = ['*'],
+        array $allowedOrigins = ['*'],
         public int $maxFramePayloadSize = 1_048_576,
         public int $maxMessagePayloadSize = 1_048_576,
         public int $maxOutgoingBufferSize = 4_194_304,
@@ -36,11 +39,15 @@ final readonly class WebSocketOptions implements WebSocketOptionsInterface
         public int $maxTotalOutgoingBufferSize = 67_108_864,
         public int $maxTotalIncomingBufferSize = 67_108_864,
     ) {
-        foreach ($this->allowedOrigins as $origin) {
+        $origins = [];
+        foreach ($allowedOrigins as $key => $origin) {
             if (!is_string($origin) || $origin === '' || trim($origin) !== $origin) {
                 throw new \InvalidArgumentException('WebSocket allowed origins must be non-empty strings without surrounding whitespace.');
             }
+            $origins[$key] = $origin;
         }
+        // Assign values, not caller-owned references into a readonly array.
+        $this->allowedOrigins = $origins;
 
         if ($this->port < 1 || $this->port > 65_535) {
             throw new \InvalidArgumentException('WebSocket port must be between 1 and 65535.');

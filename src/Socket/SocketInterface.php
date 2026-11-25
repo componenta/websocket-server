@@ -12,8 +12,13 @@ interface SocketInterface
 
     public bool $eof { get; }
 
+    /** Nonblocking read of at most a positive $maxBytes. */
     public function read(int $maxBytes): SocketReadResult;
 
+    /**
+     * Nonblocking write. WRITTEN reports the exact number of bytes accepted,
+     * in the range from zero to strlen($bytes); other statuses report zero.
+     */
     public function write(string $bytes): SocketWriteResult;
 
     public function close(): void;

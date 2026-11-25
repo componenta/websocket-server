@@ -46,6 +46,7 @@ interface TransportConnectionInterface extends ConnectionInterface
      * Process bytes in wire order and deliver complete messages synchronously.
      * The callback is not retained; recursive receives are not supported.
      * Further data messages are not delivered once closing begins.
+     * The callback may queue replies or begin closing; it must not recursively receive.
      *
      * @param \Closure(Message): void $onMessage
      */

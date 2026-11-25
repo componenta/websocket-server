@@ -6,6 +6,9 @@ namespace Componenta\WebSocket\Protocol\Handshake;
 
 final readonly class HandshakeRequest
 {
+    /** @var array<string, string> Lowercase header names. */
+    public array $headers;
+
     /**
      * @param array<string, string> $headers
      */
@@ -13,8 +16,14 @@ final readonly class HandshakeRequest
         public string $method,
         public string $target,
         public string $path,
-        public array $headers,
-    ) {}
+        array $headers,
+    ) {
+        $snapshot = [];
+        foreach ($headers as $name => $value) {
+            $snapshot[$name] = $value;
+        }
+        $this->headers = $snapshot;
+    }
 
     public function header(string $name): ?string
     {

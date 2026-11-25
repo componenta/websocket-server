@@ -6,7 +6,11 @@ namespace Componenta\WebSocket\Protocol;
 
 interface MessageAssemblerInterface
 {
-    /** Payload bytes retained between push() calls. Reset and complete messages release them. */
+    /**
+     * Non-negative payload bytes retained between push() calls.
+     * This count excludes frame headers and must not exceed received payload bytes.
+     * Reset and complete messages release them.
+     */
     public int $bufferedBytes { get; }
 
 
