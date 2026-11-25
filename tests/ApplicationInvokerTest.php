@@ -134,4 +134,69 @@ describe('WebSocket application invoker', function () {
         }
     });
 
+
+    it('isolates error context construction failures during all application callbacks', function (string $callback) {
+        $factory = new class implements Componenta\WebSocket\Application\Error\WebSocketErrorContextFactoryInterface {
+            public array $attempts = [];
+            public function create(WebSocketErrorPhase $phase, ?ConnectionInterface $connection, Throwable $error): WebSocketErrorContextInterface
+            {
+                $this->attempts[] = [$phase, $error->getMessage()];
+                throw new RuntimeException('error context factory failed');
+            }
+        };
+        $application = new class implements WebSocketApplicationInterface {
+            public function connected(ConnectionInterface $connection): void { throw new RuntimeException('connected failed'); }
+            public function received(ConnectionInterface $connection, Message $message): void { throw new RuntimeException('received failed'); }
+            public function disconnected(ConnectionInterface $connection, CloseInfo $close): void { throw new RuntimeException('disconnected failed'); }
+            public function failed(WebSocketErrorContextInterface $context): void { throw new LogicException('No context was constructed.'); }
+        };
+        $connection = invokerTestConnection('factory-failure');
+        $invoker = new SafeWebSocketApplicationInvoker($factory);
+
+        try {
+            if ($callback === 'disconnected') {
+                $connection->markClosed();
+                $invoker->disconnected($application, $connection->application, $connection->closeInfo);
+                expect($connection->closed)->toBeTrue();
+            } else {
+                $completed = $callback === 'connected'
+                    ? $invoker->connected($application, $connection->application)
+                    : $invoker->received($application, $connection->application, new Message(Opcode::TEXT, 'hello'));
+                expect($completed)->toBeFalse()
+                    ->and($connection->closing)->toBeTrue()
+                    ->and($connection->closeInfo?->code)->toBe(1011);
+            }
+            expect($factory->attempts)->toBe([[WebSocketErrorPhase::APPLICATION, $callback . ' failed']]);
+        } finally {
+            $connection->markClosed();
+            $connection->socket->close();
+        }
+    })->with(['connected', 'received', 'disconnected']);
+
+    it('attempts to report a secondary write failure even when the first error context cannot be created', function () {
+        $factory = new class implements Componenta\WebSocket\Application\Error\WebSocketErrorContextFactoryInterface {
+            public function create(WebSocketErrorPhase $phase, ?ConnectionInterface $connection, Throwable $error): WebSocketErrorContextInterface
+            {
+                if ($phase === WebSocketErrorPhase::APPLICATION) {
+                    throw new RuntimeException('context unavailable');
+                }
+                return new WebSocketErrorContext($phase, $connection, $error);
+            }
+        };
+        $connection = invokerTestConnection('secondary-report');
+        $connection->setWriteNotifier(static function (): void {
+            throw new RuntimeException('write registration failed');
+        });
+        $application = new ThrowingWebSocketApplication();
+        try {
+            expect((new SafeWebSocketApplicationInvoker($factory))->received($application, $connection->application,
+                new Message(Opcode::TEXT, 'hello')))->toBeFalse()
+                ->and($application->reported?->phase)->toBe(WebSocketErrorPhase::WRITE)
+                ->and($application->reported?->error->getMessage())->toBe('write registration failed');
+        } finally {
+            $connection->markClosed();
+            $connection->socket->close();
+        }
+    });
+
 });

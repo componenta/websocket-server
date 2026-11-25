@@ -1864,4 +1864,70 @@ describe('WebSocket server', function () {
         expect($a->closed)->toBeTrue()->and($b->closed)->toBeTrue();
     });
 
+
+    it('isolates an exception from a custom application invoker and reports the application phase', function (string $callback) {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, selectTimeoutUsec: 0, shutdownDrainTimeoutMs: 0);
+        $a = new ServerScriptedSocket('a', 'client-a', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'fail')),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::CLOSE, pack('n', 1011))),
+        ]);
+        $b = new ServerScriptedSocket('b', 'client-b', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::EMPTY),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'still running')),
+        ]);
+        $invoker = new class($callback, serverTestApplicationInvoker()) implements \Componenta\WebSocket\Application\WebSocketApplicationInvokerInterface {
+            public function __construct(private readonly string $callback, private readonly SafeWebSocketApplicationInvoker $delegate) {}
+            public function connected(WebSocketApplicationInterface $application, ConnectionInterface $connection): bool
+            {
+                if ($this->callback === 'connected' && $connection->remoteAddress === 'client-a') {
+                    throw new RuntimeException('connected invocation failed');
+                }
+                return $this->delegate->connected($application, $connection);
+            }
+            public function received(WebSocketApplicationInterface $application, ConnectionInterface $connection, Message $message): bool
+            {
+                if ($connection->remoteAddress === 'client-a') {
+                    // An application-layer ProtocolException is not an invalid client frame.
+                    throw new \Componenta\WebSocket\Exception\ProtocolException('received invocation failed');
+                }
+                return $this->delegate->received($application, $connection, $message);
+            }
+            public function disconnected(WebSocketApplicationInterface $application, ConnectionInterface $connection, CloseInfo $close): void
+            {
+                $this->delegate->disconnected($application, $connection, $close);
+            }
+            public function failed(WebSocketApplicationInterface $application, WebSocketErrorContextInterface $context): void
+            {
+                $this->delegate->failed($application, $context);
+            }
+        };
+        $codec = new FrameCodec();
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $listener = new ServerQueueListener('listener', $a, $b);
+        $server = new Server($options, new ServerBackpressureListenerFactory($listener), $loop,
+            new Handshake($options), new ConnectionFactory($codec, $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), $invoker, serverTestErrorFactory(), $clock);
+        $application = new ServerRuntimeApplication(stopOnReceived: true);
+        $application->server = $server;
+        $loop->delay(200, fn () => $server->stop());
+
+        $server->run($application);
+
+        $bytes = substr($a->written, strpos($a->written, "\r\n\r\n") + 4);
+        $close = $codec->decode($bytes, expectMasked: false);
+        expect($application->received)->toBe(1)
+            ->and($application->disconnected)->toBe(2)
+            ->and($application->errors)->toHaveCount(1)
+            ->and($application->errors[0]->phase)->toBe(WebSocketErrorPhase::APPLICATION)
+            ->and($application->errors[0]->connection?->remoteAddress)->toBe('client-a')
+            ->and($application->errors[0]->error->getMessage())->toBe($callback . ' invocation failed')
+            ->and($close?->opcode)->toBe(Opcode::CLOSE)
+            ->and(unpack('n', $close->payload)[1])->toBe(1011)
+            ->and($a->closed)->toBeTrue()
+            ->and($b->closed)->toBeTrue();
+    })->with(['connected', 'received']);
+
 });
