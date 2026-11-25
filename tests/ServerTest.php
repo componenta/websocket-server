@@ -1603,4 +1603,36 @@ describe('WebSocket server', function () {
             ->and($socket->closed)->toBeTrue();
     })->with(['immediately writable' => false, 'initially blocked' => true]);
 
+
+    it('reports pending socket read errors without treating an ordinary peer disconnect as a failure', function (bool $error) {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, selectTimeoutUsec: 0, shutdownDrainTimeoutMs: 0);
+        $socket = new ServerScriptedSocket('pending', 'local', [
+            $error
+                ? new SocketReadResult(SocketReadStatus::ERROR, reason: 'handshake read failed')
+                : new SocketReadResult(SocketReadStatus::CLOSED),
+        ]);
+        $listener = new ServerQueueListener('listener', $socket);
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server($options, new ServerBackpressureListenerFactory($listener), $loop,
+            new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock);
+        $application = new ServerRuntimeApplication();
+        $application->server = $server;
+        $loop->delay(100, fn () => $server->stop());
+
+        $server->run($application);
+
+        expect($application->connected)->toBe(0)
+            ->and($application->disconnected)->toBe(0)
+            ->and($socket->closed)->toBeTrue()
+            ->and($socket->written)->toBe('')
+            ->and($application->errors)->toHaveCount($error ? 1 : 0);
+        if ($error) {
+            expect($application->errors[0]->phase)->toBe(WebSocketErrorPhase::HANDSHAKE)
+                ->and($application->errors[0]->error->getMessage())->toBe('handshake read failed')
+                ->and($application->errors[0]->connection)->toBeNull();
+        }
+    })->with(['read error' => true, 'normal EOF' => false]);
+
 });

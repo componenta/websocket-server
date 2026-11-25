@@ -6,6 +6,15 @@ use Componenta\WebSocket\Socket\SocketReadStatus;
 use Componenta\WebSocket\Socket\SocketWriteStatus;
 use Componenta\WebSocket\Socket\StreamSocket;
 
+/** Test stream whose wrapper refuses nonblocking mode. */
+final class BlockingOnlyWebSocketTestStream
+{
+    public mixed $context = null;
+    public function stream_open(string $path, string $mode, int $options, ?string &$openedPath): bool { return true; }
+    public function stream_set_option(int $option, int $arg1, ?int $arg2): bool { return false; }
+    public function stream_eof(): bool { return false; }
+}
+
 describe('Stream socket lifecycle', function () {
     it('keeps closed sockets terminal and reports typed read and write outcomes', function () {
         $resources = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
@@ -96,5 +105,83 @@ describe('Stream socket lifecycle', function () {
             $listener->close();
         }
     })->with(['::1', '[::1]']);
+
+
+    it('rejects stream resources that refuse nonblocking mode', function (bool $listener) {
+        $scheme = 'wsblockingtest';
+        expect(stream_wrapper_register($scheme, BlockingOnlyWebSocketTestStream::class))->toBeTrue();
+        $resource = null;
+        try {
+            $resource = fopen($scheme . '://resource', 'r+');
+            expect(is_resource($resource))->toBeTrue();
+            expect(fn () => $listener
+                ? new Componenta\WebSocket\Socket\StreamSocketListener($resource)
+                : new StreamSocket($resource, 'local'))->toThrow(RuntimeException::class);
+            // On constructor failure the caller retains ownership.
+            expect(is_resource($resource))->toBeTrue();
+        } finally {
+            if (is_resource($resource)) {
+                fclose($resource);
+            }
+            stream_wrapper_unregister($scheme);
+        }
+    })->with(['connection stream' => false, 'listener stream' => true]);
+
+    it('does not allow cloning live socket resource owners', function () {
+        $resources = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        expect($resources)->not->toBeFalse();
+        $socket = new StreamSocket($resources[0], 'local');
+        $resource = stream_socket_server('tcp://127.0.0.1:0');
+        expect($resource)->not->toBeFalse();
+        $listener = new Componenta\WebSocket\Socket\StreamSocketListener($resource);
+
+        try {
+            expect(fn () => clone $socket)->toThrow(Error::class);
+            expect(fn () => clone $listener)->toThrow(Error::class);
+            expect($socket->write('hello')->writtenBytes)->toBe(5)
+                ->and(fread($resources[1], 5))->toBe('hello')
+                ->and($listener->accept())->toBeNull();
+        } finally {
+            $socket->close();
+            fclose($resources[1]);
+            $listener->close();
+        }
+    });
+
+    it('distinguishes an empty nonblocking read from a peer closing its stream', function () {
+        $resources = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        expect($resources)->not->toBeFalse();
+        $socket = new StreamSocket($resources[0], 'local');
+        try {
+            expect($socket->read(1)->status)->toBe(SocketReadStatus::EMPTY)
+                ->and($socket->write('')->writtenBytes)->toBe(0);
+            fwrite($resources[1], 'end');
+            fclose($resources[1]);
+            expect($socket->read(16)->bytes)->toBe('end')
+                ->and($socket->read(16)->status)->toBe(SocketReadStatus::CLOSED)
+                ->and($socket->eof)->toBeTrue();
+        } finally {
+            if (is_resource($resources[1])) {
+                fclose($resources[1]);
+            }
+            $socket->close();
+        }
+    });
+
+    it('reports a bind failure without closing a different listening socket', function () {
+        $resource = stream_socket_server('tcp://127.0.0.1:0');
+        expect($resource)->not->toBeFalse();
+        $address = stream_socket_get_name($resource, false);
+        expect($address)->toBeString();
+        $port = (int) substr(strrchr($address, ':'), 1);
+        try {
+            $factory = new Componenta\WebSocket\Socket\StreamSocketListenerFactory();
+            expect(fn () => $factory->listen(new Componenta\WebSocket\Config\WebSocketOptions(port: $port)))
+                ->toThrow(RuntimeException::class);
+            expect(is_resource($resource))->toBeTrue();
+        } finally {
+            fclose($resource);
+        }
+    });
 
 });
