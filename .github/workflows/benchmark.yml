@@ -1,0 +1,60 @@
+name: Comparative performance
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'benchmarks/**'
+      - '.github/workflows/benchmark.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+      - name: Install both revisions
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/baseline" 2e547491d07bd0840dd0bff674b35c145fd0acc6
+          composer install --no-interaction --prefer-dist
+          composer install --working-dir="$RUNNER_TEMP/baseline" --no-interaction --prefer-dist
+      - name: Measure on the same runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/performance"
+          php -d opcache.enable_cli=0 benchmarks/runtime.php "$RUNNER_TEMP/baseline/vendor/autoload.php" | tee "$RUNNER_TEMP/performance/baseline.json"
+          php -d opcache.enable_cli=0 benchmarks/runtime.php "$PWD/vendor/autoload.php" | tee "$RUNNER_TEMP/performance/head.json"
+          python3 - "$RUNNER_TEMP/performance" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          base = json.loads((root / "baseline.json").read_text())
+          head = json.loads((root / "head.json").read_text())
+          assert base["php"] == head["php"]
+          assert base["architecture"] == head["architecture"]
+          assert base["benchmarks"].keys() == head["benchmarks"].keys()
+          print("case | baseline median ms | head median ms | head/baseline | baseline peak extra bytes | head peak extra bytes")
+          for name, before in base["benchmarks"].items():
+              after = head["benchmarks"][name]
+              print(f"{name} | {before['median_ms']:.3f} | {after['median_ms']:.3f} | {after['median_ms'] / before['median_ms']:.4f} | {before['peak_extra_bytes']} | {after['peak_extra_bytes']}")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-comparison
+          path: ${{ runner.temp }}/performance
+          if-no-files-found: error
