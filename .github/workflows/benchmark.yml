@@ -6,7 +6,7 @@ on:
       checkpoint:
         description: 'Additional recent commit to compare hot paths against (full SHA)'
         required: false
-        default: '1f482c9f30e2cd18814ceabed6f7996023b9721a'
+        default: 'cb07d467687937b406416bf89f23028794eb8f83'
   push:
     paths:
       - 'src/**'
@@ -41,7 +41,7 @@ jobs:
           tools: composer:v2
       - name: Install shared dependencies
         env:
-          CHECKPOINT: ${{ github.event_name == 'workflow_dispatch' && inputs.checkpoint || '1f482c9f30e2cd18814ceabed6f7996023b9721a' }}
+          CHECKPOINT: ${{ github.event_name == 'workflow_dispatch' && inputs.checkpoint || 'cb07d467687937b406416bf89f23028794eb8f83' }}
         run: |
           set -euo pipefail
           git worktree add --detach "$RUNNER_TEMP/baseline" 2e547491d07bd0840dd0bff674b35c145fd0acc6

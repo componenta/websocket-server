@@ -1,0 +1,76 @@
+name: Source coverage
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'composer.json'
+      - 'phpunit.xml.dist'
+      - '.github/workflows/coverage.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'composer.json'
+      - 'phpunit.xml.dist'
+      - '.github/workflows/coverage.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: xdebug
+          tools: composer:v2
+      - run: composer install --no-interaction --prefer-dist
+      - name: Measure in-process source line coverage
+        env:
+          XDEBUG_MODE: coverage
+        run: vendor/bin/pest --coverage --coverage-clover="$RUNNER_TEMP/coverage.xml"
+      - name: Summarize coverage
+        shell: bash
+        run: |
+          python3 - "$RUNNER_TEMP/coverage.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = ET.parse(sys.argv[1]).getroot()
+          files = root.findall(".//file")
+          assert files, "No files in coverage report"
+          totals = {}
+          for file in files:
+              path = Path(file.attrib["name"]).resolve()
+              relative = path.relative_to(Path.cwd() / "src")
+              group = relative.parts[0] if len(relative.parts) > 1 else "(root)"
+              metrics = file.find("metrics")
+              assert metrics is not None, relative
+              count = int(metrics.attrib["statements"])
+              covered = int(metrics.attrib["coveredstatements"])
+              previous = totals.get(group, (0, 0))
+              totals[group] = (previous[0] + covered, previous[1] + count)
+          covered = sum(v[0] for v in totals.values())
+          count = sum(v[1] for v in totals.values())
+          assert count > 0
+          print(f"Source line coverage: {covered}/{count} ({covered/count:.2%})")
+          for group, (hit, total) in sorted(totals.items()):
+              print(f"{group}: {hit}/{total} ({hit/total:.2%})" if total else f"{group}: no executable lines")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: source-coverage
+          path: ${{ runner.temp }}/coverage.xml
+          if-no-files-found: error

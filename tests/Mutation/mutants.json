@@ -118,5 +118,45 @@
     "replacement": "foreach ($state->pending() as $session) {",
     "test": "ServerTest.php",
     "filter": "closes the listener before draining established connections during shutdown"
+  },
+  {
+    "id": "negative-assembler-count",
+    "file": "Connection/Connection.php",
+    "original": "if ($buffered < 0 || $buffered > $this->incomingReservedBytes - $undecoded) {",
+    "replacement": "if ($buffered > $this->incomingReservedBytes - $undecoded) {",
+    "test": "ConnectionContractTest.php",
+    "filter": "does not release another connection reservation when a custom assembler reports a negative retained size"
+  },
+  {
+    "id": "origin-reference",
+    "file": "Config/WebSocketOptions.php",
+    "original": "$this->allowedOrigins = $origins;",
+    "replacement": "$this->allowedOrigins = $allowedOrigins;",
+    "test": "HandshakeTest.php",
+    "filter": "keeps the validated origin allowlist independent of caller PHP references"
+  },
+  {
+    "id": "handshake-reference",
+    "file": "Protocol/Handshake/HandshakeRequest.php",
+    "original": "$this->headers = $snapshot;",
+    "replacement": "$this->headers = $headers;",
+    "test": "HandshakeTest.php",
+    "filter": "does not expose or retain direct references to immutable handshake header values"
+  },
+  {
+    "id": "timer-timeout-overflow",
+    "file": "Loop/SelectEventLoop.php",
+    "original": "$timerTimeoutUsec = ($dueAt - $now) * 1000;",
+    "replacement": "$timerTimeoutUsec = (int) (($dueAt - $now) * 1000);",
+    "test": "EventLoopTest.php",
+    "filter": "caps a far future timer wait before converting milliseconds to integer microseconds"
+  },
+  {
+    "id": "same-session-write-registration",
+    "file": "Transport/Server.php",
+    "original": "if ($connection->needsWrite && !$session->processingInput) {",
+    "replacement": "if ($connection->needsWrite) {",
+    "test": "ServerTest.php",
+    "filter": "registers a writer for a reply only if the immediate flush leaves queued bytes"
   }
 ]
