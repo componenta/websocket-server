@@ -13,7 +13,9 @@ final class StreamSocketListener implements StreamSocketListenerInterface
     public function __construct(
         public private(set) readonly mixed $resource,
     ) {
-        stream_set_blocking($this->resource, false);
+        if (!stream_set_blocking($this->resource, false)) {
+            throw new \RuntimeException('Unable to configure a nonblocking WebSocket listener.');
+        }
     }
 
     public function accept(): ?SocketInterface
@@ -28,7 +30,12 @@ final class StreamSocketListener implements StreamSocketListenerInterface
             return null;
         }
 
-        return new StreamSocket($client, $remoteAddress ?: '');
+        try {
+            return new StreamSocket($client, $remoteAddress ?: '');
+        } catch (\Throwable $error) {
+            fclose($client);
+            throw $error;
+        }
     }
 
     public function close(): void
@@ -37,4 +44,6 @@ final class StreamSocketListener implements StreamSocketListenerInterface
             @fclose($this->resource);
         }
     }
+
+    private function __clone(): void {}
 }

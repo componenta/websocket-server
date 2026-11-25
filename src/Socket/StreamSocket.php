@@ -18,7 +18,9 @@ final class StreamSocket implements StreamSocketInterface
         public private(set) readonly mixed $resource,
         public private(set) readonly string $remoteAddress,
     ) {
-        stream_set_blocking($this->resource, false);
+        if (!stream_set_blocking($this->resource, false)) {
+            throw new \RuntimeException('Unable to configure a nonblocking WebSocket stream.');
+        }
     }
 
     public function read(int $maxBytes): SocketReadResult
@@ -69,4 +71,6 @@ final class StreamSocket implements StreamSocketInterface
             @fclose($this->resource);
         }
     }
+
+    private function __clone(): void {}
 }

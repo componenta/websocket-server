@@ -144,7 +144,10 @@ final class Server implements WebSocketServerInterface
             }
 
             $read = $connection->socket->read(8192);
-            if ($read->status === SocketReadStatus::ERROR || $read->status === SocketReadStatus::CLOSED) {
+            if ($read->status === SocketReadStatus::ERROR) {
+                throw new \RuntimeException($read->reason ?? 'Unable to read WebSocket handshake.');
+            }
+            if ($read->status === SocketReadStatus::CLOSED) {
                 $this->discardPending($state, $session);
                 return;
             }
