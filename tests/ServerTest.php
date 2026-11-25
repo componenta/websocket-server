@@ -525,6 +525,7 @@ describe('WebSocket server', function () {
             ->and($application->connected)->toBe(1)
             ->and($application->disconnected)->toBe(1)
             ->and($application->lastClose?->code)->toBe(CloseCode::GOING_AWAY)
+            ->and($application->lastClose?->initiator)->toBe(\Componenta\WebSocket\Protocol\CloseInitiator::SERVER)
             ->and($application->errors)->toBe([])
             ->and($socket->closed)->toBeTrue();
     });
@@ -600,6 +601,7 @@ describe('WebSocket server', function () {
             ->and($application->connected)->toBe(1)
             ->and($application->disconnected)->toBe(1)
             ->and($application->lastClose?->code)->toBe(CloseCode::GOING_AWAY)
+            ->and($application->lastClose?->initiator)->toBe(\Componenta\WebSocket\Protocol\CloseInitiator::SERVER)
             ->and($application->lastClose?->reason)->toBe('Server shutdown')
             ->and($application->errors)->toBe([])
             ->and($socket->closed)->toBeTrue();
@@ -1131,6 +1133,7 @@ describe('WebSocket server', function () {
         $frame = $codec->decode($bytes, expectMasked: false);
         expect($frame?->opcode)->toBe(Opcode::CLOSE)
             ->and($application->lastClose?->clean)->toBeTrue()
+            ->and($application->lastClose?->initiator)->toBe(\Componenta\WebSocket\Protocol\CloseInitiator::SERVER)
             ->and($socket->closed)->toBeTrue()
             ->and($application->errors)->toBe([]);
     });
