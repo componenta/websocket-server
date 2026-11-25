@@ -53,9 +53,9 @@ final readonly class SafeWebSocketApplicationInvoker implements WebSocketApplica
             $closeFailure = $failure;
         }
 
-        $this->failed($application, $this->errors->create(WebSocketErrorPhase::APPLICATION, $connection, $error));
+        $this->report($application, WebSocketErrorPhase::APPLICATION, $connection, $error);
         if ($closeFailure !== null) {
-            $this->failed($application, $this->errors->create(WebSocketErrorPhase::WRITE, $connection, $closeFailure));
+            $this->report($application, WebSocketErrorPhase::WRITE, $connection, $closeFailure);
         }
 
         return false;
@@ -69,10 +69,21 @@ final readonly class SafeWebSocketApplicationInvoker implements WebSocketApplica
         try {
             $application->disconnected($connection, $close);
         } catch (\Throwable $e) {
-            $this->failed(
-                $application,
-                $this->errors->create(WebSocketErrorPhase::APPLICATION, $connection, $e),
-            );
+            $this->report($application, WebSocketErrorPhase::APPLICATION, $connection, $e);
+        }
+    }
+
+    private function report(
+        WebSocketApplicationInterface $application,
+        WebSocketErrorPhase $phase,
+        ConnectionInterface $connection,
+        \Throwable $error,
+    ): void {
+        try {
+            $this->failed($application, $this->errors->create($phase, $connection, $error));
+        } catch (\Throwable) {
+            // Context creation is also best effort. It must not change the
+            // outcome of the callback or prevent a secondary error report.
         }
     }
 

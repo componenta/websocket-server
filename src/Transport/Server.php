@@ -247,7 +247,12 @@ final class Server implements WebSocketServerInterface
             return;
         }
         $session->announce();
-        if (!$this->applications->connected($state->application, $connection->application) && !$connection->closing) {
+        try {
+            $completed = $this->applications->connected($state->application, $connection->application);
+        } catch (\Throwable $error) {
+            $completed = $this->applicationInvocationFailed($state, $session, $error);
+        }
+        if (!$completed && !$connection->closing) {
             $this->closeConnection($state, $session, CloseInfo::transport('Unable to queue application error close frame.'));
             return;
         }
@@ -312,10 +317,37 @@ final class Server implements WebSocketServerInterface
             return;
         }
 
-        $completed = $this->applications->received($state->application, $connection->application, $message);
+        try {
+            $completed = $this->applications->received($state->application, $connection->application, $message);
+        } catch (\Throwable $error) {
+            $completed = $this->applicationInvocationFailed($state, $session, $error);
+        }
         if (!$completed && !$connection->closing) {
             $this->closeConnection($state, $session, CloseInfo::transport('Unable to queue application error close frame.'));
         }
+    }
+
+    /**
+     * Fallback for an invoker that itself throws instead of returning false.
+     * Such an exception is not a client protocol violation, even if its type
+     * is ProtocolException. Begin closing before exposing the error to the app.
+     */
+    private function applicationInvocationFailed(ServerRunState $state, ActiveSession $session, \Throwable $error): false
+    {
+        $connection = $session->connection;
+        $closeFailure = null;
+        try {
+            $connection->close(CloseCode::INTERNAL_ERROR, 'Internal server error');
+        } catch (\Throwable $failure) {
+            $closeFailure = $failure;
+        }
+
+        $this->fail($state, WebSocketErrorPhase::APPLICATION, $connection, $error);
+        if ($closeFailure !== null) {
+            $this->fail($state, WebSocketErrorPhase::WRITE, $connection, $closeFailure);
+        }
+
+        return false;
     }
 
     private function protocolFailure(ServerRunState $state, ActiveSession $session, ProtocolException $error): void

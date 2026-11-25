@@ -11,9 +11,10 @@ use Componenta\WebSocket\Protocol\Message;
 
 interface WebSocketApplicationInvokerInterface
 {
-    /** True when the callback completed; false when an application failure was reported. */
+    /** True when the callback completed; false when it failed. Reporting is best effort. */
     public function connected(WebSocketApplicationInterface $application, ConnectionInterface $connection): bool;
 
+    /** True when the callback completed; false when it failed. Reporting is best effort. */
     public function received(
         WebSocketApplicationInterface $application,
         ConnectionInterface $connection,

@@ -222,5 +222,29 @@
     "replacement": "$handle = $connection instanceof TransportConnectionInterface ? $connection->application : $connection;\n        $this->applications->failed($state->application, $this->errors->create($phase, $handle, $error));",
     "test": "ServerTest.php",
     "filter": "isolates an error context factory failure from other active connections"
+  },
+  {
+    "id": "invoker-error-context-isolation",
+    "file": "Application/SafeWebSocketApplicationInvoker.php",
+    "original": "try {\n            $this->failed($application, $this->errors->create($phase, $connection, $error));\n        } catch (\\Throwable) {\n            // Context creation is also best effort. It must not change the\n            // outcome of the callback or prevent a secondary error report.\n        }",
+    "replacement": "$this->failed($application, $this->errors->create($phase, $connection, $error));",
+    "test": "ApplicationInvokerTest.php",
+    "filter": "isolates error context construction failures during all application callbacks"
+  },
+  {
+    "id": "invoker-connected-isolation",
+    "file": "Transport/Server.php",
+    "original": "try {\n            $completed = $this->applications->connected($state->application, $connection->application);\n        } catch (\\Throwable $error) {\n            $completed = $this->applicationInvocationFailed($state, $session, $error);\n        }\n        if (!$completed && !$connection->closing) {",
+    "replacement": "if (!$this->applications->connected($state->application, $connection->application) && !$connection->closing) {",
+    "test": "ServerTest.php",
+    "filter": "isolates an exception from a custom application invoker and reports the application phase"
+  },
+  {
+    "id": "invoker-received-isolation",
+    "file": "Transport/Server.php",
+    "original": "try {\n            $completed = $this->applications->received($state->application, $connection->application, $message);\n        } catch (\\Throwable $error) {\n            $completed = $this->applicationInvocationFailed($state, $session, $error);\n        }",
+    "replacement": "$completed = $this->applications->received($state->application, $connection->application, $message);",
+    "test": "ServerTest.php",
+    "filter": "isolates an exception from a custom application invoker and reports the application phase"
   }
 ]
