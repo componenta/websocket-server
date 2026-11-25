@@ -24,7 +24,14 @@ final class StreamSocketListener implements StreamSocketListenerInterface
             return null;
         }
 
-        $client = @stream_socket_accept($this->resource, 0, $remoteAddress);
+        // PHP warns on a normal empty nonblocking accept. Suppression with
+        // @ alone still invokes an installed user error handler.
+        set_error_handler(static fn (int $level, string $message): bool => true, E_WARNING);
+        try {
+            $client = stream_socket_accept($this->resource, 0, $remoteAddress);
+        } finally {
+            restore_error_handler();
+        }
 
         if ($client === false) {
             return null;

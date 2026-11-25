@@ -182,5 +182,13 @@
     "replacement": "$this->discardPending($state, $session);\n                return;",
     "test": "ServerTest.php",
     "filter": "reports pending socket read errors without treating an ordinary peer disconnect as a failure"
+  },
+  {
+    "id": "empty-accept-warning",
+    "file": "Socket/StreamSocketListener.php",
+    "original": "// PHP warns on a normal empty nonblocking accept. Suppression with\n        // @ alone still invokes an installed user error handler.\n        set_error_handler(static fn (int $level, string $message): bool => true, E_WARNING);\n        try {\n            $client = stream_socket_accept($this->resource, 0, $remoteAddress);\n        } finally {\n            restore_error_handler();\n        }",
+    "replacement": "$client = @stream_socket_accept($this->resource, 0, $remoteAddress);",
+    "test": "StreamSocketTest.php",
+    "filter": "returns null for an empty accept queue even with a warning-to-exception handler"
   }
 ]
