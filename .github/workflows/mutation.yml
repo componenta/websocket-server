@@ -1,0 +1,47 @@
+name: Targeted mutation checks
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'composer.json'
+      - '.github/workflows/mutation.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'composer.json'
+      - '.github/workflows/mutation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+      - run: composer install --no-interaction --prefer-dist
+      - run: python3 tests/Mutation/run.py --report="$RUNNER_TEMP/mutation.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-php-${{ matrix.php }}
+          path: ${{ runner.temp }}/mutation.json
+          if-no-files-found: warn

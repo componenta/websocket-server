@@ -1,0 +1,122 @@
+[
+  {
+    "id": "client-masking",
+    "file": "Protocol/FrameCodec.php",
+    "original": "if ($expectMasked && !$masked) {",
+    "replacement": "if (false) {",
+    "test": "FrameCodecTest.php",
+    "filter": "rejects unmasked client frames"
+  },
+  {
+    "id": "canonical-length",
+    "file": "Protocol/FrameCodec.php",
+    "original": "if ($payloadLength < 126) {",
+    "replacement": "if (false) {",
+    "test": "FrameCodecTest.php",
+    "filter": "rejects non-minimal extended payload lengths"
+  },
+  {
+    "id": "utf8-message",
+    "file": "Protocol/MessageAssembler.php",
+    "original": "if ($opcode !== Opcode::TEXT || preg_match('//u', $payload) === 1) {",
+    "replacement": "if (true) {",
+    "test": "FrameCodecTest.php",
+    "filter": "rejects non-UTF-8 text message payloads"
+  },
+  {
+    "id": "close-ack",
+    "file": "Connection/Connection.php",
+    "original": "get => $this->closing && !$this->needsWrite && ($this->peerCloseReceived || $this->protocolFailed);",
+    "replacement": "get => $this->closing && !$this->needsWrite;",
+    "test": "ConnectionContractTest.php",
+    "filter": "waits for the peer close after sending a local close frame"
+  },
+  {
+    "id": "pong-payload",
+    "file": "Connection/Connection.php",
+    "original": "if ($this->pingSent && $frame->payload === $this->pendingPingPayload) {",
+    "replacement": "if ($this->pingSent) {",
+    "test": "ConnectionContractTest.php",
+    "filter": "only acknowledges a fully written ping with a matching pong payload"
+  },
+  {
+    "id": "outgoing-limit",
+    "file": "Connection/Connection.php",
+    "original": "if ($encodedBytes > $this->maxOutgoingBufferSize - $this->queuedBytes) {",
+    "replacement": "if (false) {",
+    "test": "ConnectionContractTest.php",
+    "filter": "rejects oversized outgoing frames before encoding them"
+  },
+  {
+    "id": "incoming-release",
+    "file": "Connection/Connection.php",
+    "original": "$this->incomingBudget->release($this->incomingReservedBytes - $retained);",
+    "replacement": "// Mutation: fail to release consumed input.",
+    "test": "ConnectionContractTest.php",
+    "filter": "accounts for incomplete frames and fragmented messages in a shared incoming budget"
+  },
+  {
+    "id": "host-authority",
+    "file": "Protocol/Handshake/Handshake.php",
+    "original": "$headers['host'] = $authority[1];",
+    "replacement": "// Mutation: preserve the conflicting supplied Host.",
+    "test": "HandshakeTest.php",
+    "filter": "uses the authority of an absolute request target rather than the supplied host"
+  },
+  {
+    "id": "body-framing",
+    "file": "Protocol/Handshake/Handshake.php",
+    "original": "if ($headerEnd === false || $headerEnd + 4 !== strlen($rawRequest)) {",
+    "replacement": "if ($headerEnd === false) {",
+    "test": "HandshakeTest.php",
+    "filter": "rejects upgrade requests with unsupported HTTP message framing"
+  },
+  {
+    "id": "context-key",
+    "file": "Connection/ConnectionContext.php",
+    "original": "$attributes = $this->attributes;\n        $attributes[$key] = $value;\n\n        return new self($attributes);",
+    "replacement": "return new self([...$this->attributes, $key => $value]);",
+    "test": "ConnectionContractTest.php",
+    "filter": "preserves numeric-string context keys"
+  },
+  {
+    "id": "one-shot-timer",
+    "file": "Loop/LoopTimer.php",
+    "original": "$this->cancel();\n        $callback?->__invoke();",
+    "replacement": "$callback?->__invoke();\n        $this->cancel();",
+    "test": "EventLoopTest.php",
+    "filter": "releases callback state and disables a one-shot timer"
+  },
+  {
+    "id": "deferred-loss",
+    "file": "Loop/SelectEventLoop.php",
+    "original": "if (!$completed || !$this->running) {",
+    "replacement": "if (!$this->running) {",
+    "test": "EventLoopTest.php",
+    "filter": "preserves not-yet-invoked deferred callbacks"
+  },
+  {
+    "id": "write-offset",
+    "file": "Connection/OutgoingBuffer.php",
+    "original": "$this->offset += $bytes;",
+    "replacement": "$this->offset = $bytes;",
+    "test": "ConnectionContractTest.php",
+    "filter": "preserves bytes and reservations across repeated single and multi chunk queue transitions"
+  },
+  {
+    "id": "directional-close",
+    "file": "Connection/Connection.php",
+    "original": "if ($code === CloseCode::MANDATORY_EXTENSION || !$this->isValidCloseCode($code)) {",
+    "replacement": "if (!$this->isValidCloseCode($code)) {",
+    "test": "ConnectionContractTest.php",
+    "filter": "does not send the client-only extension close status"
+  },
+  {
+    "id": "shutdown-listener",
+    "file": "Transport/Server.php",
+    "original": "$this->closeSocket($state, $listener);\n        foreach ($state->pending() as $session) {",
+    "replacement": "foreach ($state->pending() as $session) {",
+    "test": "ServerTest.php",
+    "filter": "closes the listener before draining established connections during shutdown"
+  }
+]
