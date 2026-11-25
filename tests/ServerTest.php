@@ -1519,4 +1519,88 @@ describe('WebSocket server', function () {
         expect($calls)->toBe(['stop inactive server', 'unrelated task']);
     });
 
+
+    it('registers a writer for a reply only if the immediate flush leaves queued bytes', function (bool $blocked) {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, selectTimeoutUsec: 0, shutdownDrainTimeoutMs: 0);
+        $codec = new FrameCodec();
+        $writes = $blocked
+            ? [new SocketWriteResult(SocketWriteStatus::WRITTEN), new SocketWriteResult(SocketWriteStatus::BLOCKED)]
+            : [];
+        $socket = new ServerScriptedSocket('client', 'local', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+            new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::TEXT, 'hello')),
+        ], $writes);
+        $selector = new class implements SocketSelectorInterface {
+            private int $readEvents = 0;
+            public function assertSelectable(SocketInterface|SocketListenerInterface $target): void {}
+            public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection
+            {
+                $readyListeners = [];
+                $readable = [];
+                $writable = [];
+                foreach ($listeners as $listener) {
+                    if ($listener instanceof ServerQueueListener && $listener->hasPending) {
+                        $readyListeners[$listener->id] = $listener;
+                    }
+                }
+                foreach ($read as $socket) {
+                    if ($this->readEvents < 2) {
+                        $readable[$socket->id] = $socket;
+                        $this->readEvents++;
+                    }
+                }
+                foreach ($write as $socket) {
+                    $writable[$socket->id] = $socket;
+                }
+                return new SocketSelection($readyListeners, $readable, $writable);
+            }
+        };
+        $loop = new class(new SelectEventLoop($selector, $clock, 0)) implements \Componenta\WebSocket\Loop\EventLoopInterface {
+            public int $writeRegistrations = 0;
+            public function __construct(private readonly SelectEventLoop $delegate) {}
+            public function onReadable(SocketInterface|SocketListenerInterface $socket, callable $callback): \Componenta\WebSocket\Loop\LoopWatcherInterface
+            {
+                return $this->delegate->onReadable($socket, $callback);
+            }
+            public function onWritable(SocketInterface $socket, callable $callback): \Componenta\WebSocket\Loop\LoopWatcherInterface
+            {
+                $this->writeRegistrations++;
+                return $this->delegate->onWritable($socket, $callback);
+            }
+            public function delay(int $milliseconds, callable $callback): \Componenta\WebSocket\Loop\LoopTimerInterface
+            {
+                return $this->delegate->delay($milliseconds, $callback);
+            }
+            public function defer(callable $callback): void { $this->delegate->defer($callback); }
+            public function run(): void { $this->delegate->run(); }
+            public function stop(): void { $this->delegate->stop(); }
+        };
+        $server = new Server($options, new ServerBackpressureListenerFactory(new ServerQueueListener('listener', $socket)),
+            $loop, new Handshake($options), new ConnectionFactory($codec, $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock);
+        $application = new class implements WebSocketApplicationInterface {
+            public ?bool $accepted = null;
+            public array $errors = [];
+            public function connected(ConnectionInterface $connection): void {}
+            public function received(ConnectionInterface $connection, Message $message): void
+            {
+                $this->accepted = $connection->sendText('echo:' . $message->payload)->accepted;
+            }
+            public function disconnected(ConnectionInterface $connection, CloseInfo $close): void {}
+            public function failed(WebSocketErrorContextInterface $context): void { $this->errors[] = $context; }
+        };
+
+        $loop->delay(100, fn () => $server->stop());
+        $server->run($application);
+
+        $bytes = substr($socket->written, strpos($socket->written, "\r\n\r\n") + 4);
+        expect($application->accepted)->toBeTrue()
+            ->and($application->errors)->toBe([])
+            ->and($codec->decode($bytes, expectMasked: false)?->payload)->toBe('echo:hello')
+            ->and($bytes)->toBe('')
+            ->and($loop->writeRegistrations)->toBe($blocked ? 1 : 0)
+            ->and($socket->closed)->toBeTrue();
+    })->with(['immediately writable' => false, 'initially blocked' => true]);
+
 });
