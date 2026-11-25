@@ -537,11 +537,7 @@ final class Server implements WebSocketServerInterface
         $this->closeSocket($state, $connection->socket, $connection);
 
         if ($writeRegistrationFailure !== null) {
-            try {
-                $this->fail($state, WebSocketErrorPhase::WRITE, $connection, $writeRegistrationFailure);
-            } catch (\Throwable $error) {
-                $this->cleanupFailure($state, $connection, $error);
-            }
+            $this->fail($state, WebSocketErrorPhase::WRITE, $connection, $writeRegistrationFailure);
         }
 
         if ($session->announced) {
@@ -599,17 +595,18 @@ final class Server implements WebSocketServerInterface
 
     private function fail(ServerRunState $state, WebSocketErrorPhase $phase, ?ConnectionInterface $connection, \Throwable $error): void
     {
-        $handle = $connection instanceof TransportConnectionInterface ? $connection->application : $connection;
-        $this->applications->failed($state->application, $this->errors->create($phase, $handle, $error));
+        try {
+            $handle = $connection instanceof TransportConnectionInterface ? $connection->application : $connection;
+            $this->applications->failed($state->application, $this->errors->create($phase, $handle, $error));
+        } catch (\Throwable) {
+            // Error reporting is best effort. A broken reporter must not
+            // interrupt resource cleanup or the other connections.
+        }
     }
 
     private function cleanupFailure(ServerRunState $state, ?ConnectionInterface $connection, \Throwable $error): void
     {
-        try {
-            $this->fail($state, WebSocketErrorPhase::SHUTDOWN, $connection, $error);
-        } catch (\Throwable) {
-            // The error reporter must not prevent releasing other resources.
-        }
+        $this->fail($state, WebSocketErrorPhase::SHUTDOWN, $connection, $error);
     }
 
     private function writeImmediate(SocketInterface $socket, string $data): void

@@ -12,7 +12,7 @@ interface SocketInterface
 
     public bool $eof { get; }
 
-    /** Nonblocking read of at most a positive $maxBytes. */
+    /** Nonblocking read of at most a positive $maxBytes. Expected I/O failures return ERROR. */
     public function read(int $maxBytes): SocketReadResult;
 
     /**

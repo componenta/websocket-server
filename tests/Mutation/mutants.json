@@ -190,5 +190,37 @@
     "replacement": "$client = @stream_socket_accept($this->resource, 0, $remoteAddress);",
     "test": "StreamSocketTest.php",
     "filter": "returns null for an empty accept queue even with a warning-to-exception handler"
+  },
+  {
+    "id": "native-read-notice",
+    "file": "Socket/StreamSocket.php",
+    "original": "// Native I/O failures may emit E_NOTICE or E_WARNING before returning\n        // false. Keep those failures in the typed result contract.\n        static $ignoreNativeDiagnostic = static fn (int $level, string $message): bool => true;\n        set_error_handler($ignoreNativeDiagnostic, E_NOTICE | E_WARNING);\n        try {\n            $bytes = fread($this->resource, $maxBytes);\n        } finally {\n            restore_error_handler();\n        }",
+    "replacement": "$bytes = @fread($this->resource, $maxBytes);",
+    "test": "StreamSocketTest.php",
+    "filter": "returns a typed read error when the native stream emits a notice"
+  },
+  {
+    "id": "native-write-notice",
+    "file": "Socket/StreamSocket.php",
+    "original": "static $ignoreNativeDiagnostic = static fn (int $level, string $message): bool => true;\n        set_error_handler($ignoreNativeDiagnostic, E_NOTICE | E_WARNING);\n        try {\n            $written = fwrite($this->resource, $bytes);\n        } finally {\n            restore_error_handler();\n        }",
+    "replacement": "$written = @fwrite($this->resource, $bytes);",
+    "test": "StreamSocketTest.php",
+    "filter": "returns a typed write error for a broken pipe with a caller notice handler installed"
+  },
+  {
+    "id": "shutdown-read-error",
+    "file": "Transport/ShutdownCoordinator.php",
+    "original": "} elseif ($read->status === SocketReadStatus::ERROR) {\n                            $reason = $read->reason ?? 'Unable to read during WebSocket shutdown.';\n                            $report($session, new \\RuntimeException($reason));\n                            $close($session, CloseInfo::transport($reason));\n                            continue;\n                        } elseif ($read->status === SocketReadStatus::CLOSED) {\n                            $close($session, CloseInfo::transport($read->reason ?? 'Socket closed during shutdown.'));\n                            continue;\n                        }",
+    "replacement": "} elseif ($read->status === SocketReadStatus::ERROR || $read->status === SocketReadStatus::CLOSED) {\n                            $close($session, CloseInfo::transport($read->reason ?? 'Socket closed during shutdown.'));\n                            continue;\n                        }",
+    "test": "ServerTest.php",
+    "filter": "reports read errors during shutdown and continues draining the other sessions"
+  },
+  {
+    "id": "error-reporter-isolation",
+    "file": "Transport/Server.php",
+    "original": "try {\n            $handle = $connection instanceof TransportConnectionInterface ? $connection->application : $connection;\n            $this->applications->failed($state->application, $this->errors->create($phase, $handle, $error));\n        } catch (\\Throwable) {\n            // Error reporting is best effort. A broken reporter must not\n            // interrupt resource cleanup or the other connections.\n        }",
+    "replacement": "$handle = $connection instanceof TransportConnectionInterface ? $connection->application : $connection;\n        $this->applications->failed($state->application, $this->errors->create($phase, $handle, $error));",
+    "test": "ServerTest.php",
+    "filter": "isolates an error context factory failure from other active connections"
   }
 ]

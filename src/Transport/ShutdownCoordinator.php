@@ -55,7 +55,12 @@ final readonly class ShutdownCoordinator
                         if ($read->status === SocketReadStatus::DATA) {
                             $connection->receiveBytes($read->bytes, static function (Message $message): void {});
                             $progress = true;
-                        } elseif ($read->status === SocketReadStatus::ERROR || $read->status === SocketReadStatus::CLOSED) {
+                        } elseif ($read->status === SocketReadStatus::ERROR) {
+                            $reason = $read->reason ?? 'Unable to read during WebSocket shutdown.';
+                            $report($session, new \RuntimeException($reason));
+                            $close($session, CloseInfo::transport($reason));
+                            continue;
+                        } elseif ($read->status === SocketReadStatus::CLOSED) {
                             $close($session, CloseInfo::transport($read->reason ?? 'Socket closed during shutdown.'));
                             continue;
                         }

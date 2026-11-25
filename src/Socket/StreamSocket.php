@@ -29,7 +29,15 @@ final class StreamSocket implements StreamSocketInterface
             return new SocketReadResult(SocketReadStatus::CLOSED);
         }
 
-        $bytes = @fread($this->resource, $maxBytes);
+        // Native I/O failures may emit E_NOTICE or E_WARNING before returning
+        // false. Keep those failures in the typed result contract.
+        static $ignoreNativeDiagnostic = static fn (int $level, string $message): bool => true;
+        set_error_handler($ignoreNativeDiagnostic, E_NOTICE | E_WARNING);
+        try {
+            $bytes = fread($this->resource, $maxBytes);
+        } finally {
+            restore_error_handler();
+        }
 
         if ($bytes === false) {
             return new SocketReadResult(SocketReadStatus::ERROR, reason: 'Unable to read from socket.');
@@ -52,7 +60,13 @@ final class StreamSocket implements StreamSocketInterface
             return new SocketWriteResult(SocketWriteStatus::WRITTEN);
         }
 
-        $written = @fwrite($this->resource, $bytes);
+        static $ignoreNativeDiagnostic = static fn (int $level, string $message): bool => true;
+        set_error_handler($ignoreNativeDiagnostic, E_NOTICE | E_WARNING);
+        try {
+            $written = fwrite($this->resource, $bytes);
+        } finally {
+            restore_error_handler();
+        }
 
         if ($written === false) {
             return new SocketWriteResult(SocketWriteStatus::ERROR, reason: 'Unable to write to socket.');

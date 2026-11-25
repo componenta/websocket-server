@@ -26,5 +26,6 @@ interface WebSocketApplicationInvokerInterface
         CloseInfo $close,
     ): void;
 
+    /** Report a failure without interrupting other sessions or resource cleanup. */
     public function failed(WebSocketApplicationInterface $application, WebSocketErrorContextInterface $context): void;
 }
