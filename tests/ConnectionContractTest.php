@@ -561,4 +561,75 @@ describe('WebSocket connection contract', function () {
             ->and($context->with('other', true)->get('actor'))->toBe(42);
     });
 
+
+    it('preserves bytes and reservations across repeated single and multi chunk queue transitions', function () {
+        $codec = new FrameCodec();
+        $budget = new Componenta\WebSocket\Connection\BufferBudget(300_000);
+        $socket = new class implements SocketInterface {
+            public string $id = 'bounded-write';
+            public string $remoteAddress = 'local';
+            public bool $eof { get => false; }
+            public string $written = '';
+            public int $writeLimit = 8191;
+
+            public function read(int $maxBytes): SocketReadResult
+            {
+                return new SocketReadResult(SocketReadStatus::EMPTY);
+            }
+
+            public function write(string $bytes): SocketWriteResult
+            {
+                $length = min(strlen($bytes), $this->writeLimit);
+                if ($length === 0) {
+                    return new SocketWriteResult(SocketWriteStatus::BLOCKED);
+                }
+                if (strlen($bytes) > 65_536) {
+                    throw new RuntimeException('A partial write copied more than one bounded chunk.');
+                }
+                $this->written .= substr($bytes, 0, $length);
+                return new SocketWriteResult(SocketWriteStatus::WRITTEN, $length);
+            }
+
+            public function close(): void {}
+        };
+        $connection = new Connection($socket, $codec, new MessageAssembler(1024), 1024, 'bounded',
+            new HandshakeRequest('GET', '/ws', '/ws', []), outgoingBudget: $budget);
+        $expected = '';
+        $send = function (string $payload) use ($connection, $codec, &$expected): void {
+            $expected .= $codec->encode(new Frame(Opcode::BINARY, $payload));
+            expect($connection->sendBinary($payload)->accepted)->toBeTrue();
+        };
+        $drain = function () use ($connection, $socket, &$expected): void {
+            for ($i = 0; $connection->needsWrite && $i < 100; $i++) {
+                expect($connection->flush())->toBeTrue();
+                expect($connection->queuedBytes)->toBe(strlen($expected) - strlen($socket->written));
+            }
+            expect($connection->needsWrite)->toBeFalse()
+                ->and($socket->written)->toBe($expected);
+        };
+
+        try {
+            $send('small');
+            $drain();
+            $send(str_repeat('a', 65_526)); // Header plus payload crosses the single-chunk boundary.
+            $connection->flush();
+            $send(str_repeat('b', 65_532));
+            $socket->writeLimit = 0;
+            expect($connection->flush())->toBeTrue()
+                ->and($connection->queuedBytes)->toBe(strlen($expected) - strlen($socket->written));
+            $socket->writeLimit = 8191;
+            $send(str_repeat('c', 70_000));
+            $drain();
+            $send('small again');
+            $drain();
+            $send(str_repeat('d', 140_000));
+            $connection->markClosed();
+            expect($connection->queuedBytes)->toBe(0)
+                ->and($budget->reserve(300_000))->toBeTrue();
+            $budget->release(300_000);
+        } finally {
+            $connection->markClosed();
+        }
+    });
+
 });
