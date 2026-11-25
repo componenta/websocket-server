@@ -46,4 +46,6 @@ interface WebSocketOptionsInterface
     public int $closeHandshakeTimeoutMs { get; }
 
     public int $maxTotalOutgoingBufferSize { get; }
+
+    public int $maxTotalIncomingBufferSize { get; }
 }

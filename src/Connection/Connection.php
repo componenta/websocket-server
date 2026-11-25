@@ -20,6 +20,7 @@ use Componenta\WebSocket\Socket\SocketWriteStatus;
 final class Connection implements TransportConnectionInterface
 {
     private string $buffer = '';
+    private int $incomingReservedBytes = 0;
     private readonly OutgoingBuffer $outgoingBuffer;
     private ?\Closure $writeNotifier = null;
     private ?ConnectionInterface $applicationHandle = null;
@@ -74,8 +75,13 @@ final class Connection implements TransportConnectionInterface
         private(set) readonly HandshakeRequest $request,
         public ConnectionContextInterface $context = new ConnectionContext(),
         private readonly int $maxOutgoingBufferSize = 4_194_304,
-        private readonly ?OutgoingBudget $outgoingBudget = null,
+        private readonly ?BufferBudget $outgoingBudget = null,
+        private readonly ?BufferBudget $incomingBudget = null,
     ) {
+        if ($assembler->bufferedBytes !== 0) {
+            throw new \InvalidArgumentException('Connection requires a fresh message assembler.');
+        }
+
         $this->outgoingBuffer = new OutgoingBuffer();
     }
 
@@ -125,6 +131,8 @@ final class Connection implements TransportConnectionInterface
 
         $this->state = ConnectionState::CLOSING;
         $this->closeInfo = CloseInfo::local($code, $reason);
+        $this->assembler->reset();
+        $this->syncIncomingReservation();
         $this->notifyWrite();
 
         return $result;
@@ -141,6 +149,14 @@ final class Connection implements TransportConnectionInterface
             return;
         }
 
+        if ($this->incomingBudget !== null) {
+            $length = strlen($bytes);
+            if (!$this->incomingBudget->reserve($length)) {
+                throw new ProtocolException('Incoming WebSocket buffer budget is full.', CloseCode::PAYLOAD_TOO_LARGE);
+            }
+            $this->incomingReservedBytes += $length;
+        }
+
         $this->receiving = true;
         try {
             $this->buffer .= $bytes;
@@ -149,17 +165,18 @@ final class Connection implements TransportConnectionInterface
                 && ($frame = $this->codec->decode($this->buffer, true, $this->maxPayloadSize)) !== null
             ) {
                 $message = $this->handleFrame($frame);
+                if ($this->peerCloseReceived) {
+                    $this->resetIncoming();
+                }
+                $this->syncIncomingReservation();
+
                 if ($message !== null) {
                     $onMessage($message);
-                }
-
-                if ($this->peerCloseReceived) {
-                    $this->buffer = '';
-                    $this->assembler->reset();
                 }
             }
         } finally {
             $this->receiving = false;
+            $this->syncIncomingReservation();
         }
     }
 
@@ -217,8 +234,7 @@ final class Connection implements TransportConnectionInterface
     public function failProtocol(int $code, string $reason): SendResult
     {
         $this->protocolFailed = true;
-        $this->buffer = '';
-        $this->assembler->reset();
+        $this->resetIncoming();
 
         return $this->beginClose($code, $reason);
     }
@@ -237,10 +253,35 @@ final class Connection implements TransportConnectionInterface
         $this->writeNotifier = null;
         $this->pendingPingPayload = null;
         $this->pendingPingBytes = 0;
-        $this->buffer = '';
         $this->outgoingBudget?->release($this->queuedBytes);
         $this->outgoingBuffer->clear();
-        $this->assembler->reset();
+        $this->resetIncoming();
+    }
+
+    private function syncIncomingReservation(): void
+    {
+        if ($this->incomingBudget === null) {
+            return;
+        }
+
+        $retained = strlen($this->buffer) + $this->assembler->bufferedBytes;
+        if ($retained > $this->incomingReservedBytes) {
+            throw new \LogicException('Decoder or assembler retained more bytes than received.');
+        }
+
+        $this->incomingBudget->release($this->incomingReservedBytes - $retained);
+        $this->incomingReservedBytes = $retained;
+    }
+
+    private function resetIncoming(): void
+    {
+        $this->buffer = '';
+        try {
+            $this->assembler->reset();
+        } finally {
+            $this->incomingBudget?->release($this->incomingReservedBytes);
+            $this->incomingReservedBytes = 0;
+        }
     }
 
     private function handleFrame(Frame $frame): ?Message

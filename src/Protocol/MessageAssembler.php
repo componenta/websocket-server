@@ -11,6 +11,10 @@ final class MessageAssembler implements MessageAssemblerInterface
     private ?Opcode $fragmentOpcode = null;
     private string $fragmentPayload = '';
 
+    public int $bufferedBytes {
+        get => strlen($this->fragmentPayload);
+    }
+
     public function __construct(
         private readonly int $maxMessagePayloadSize,
     ) {}

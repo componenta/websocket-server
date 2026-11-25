@@ -13,6 +13,7 @@ interface ConnectionFactoryInterface
         SocketInterface $socket,
         string $id,
         HandshakeRequest $request,
-        ?OutgoingBudget $outgoingBudget = null,
+        ?BufferBudget $outgoingBudget = null,
+        ?BufferBudget $incomingBudget = null,
     ): TransportConnectionInterface;
 }

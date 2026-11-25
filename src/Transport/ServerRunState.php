@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Componenta\WebSocket\Transport;
 
 use Componenta\WebSocket\Application\WebSocketApplicationInterface;
-use Componenta\WebSocket\Connection\OutgoingBudget;
+use Componenta\WebSocket\Connection\BufferBudget;
 
 /** @internal The ownership boundary for one invocation of Server::run(). */
 final class ServerRunState
@@ -16,14 +16,17 @@ final class ServerRunState
     private array $active = [];
 
     public readonly SessionWatchers $watchers;
-    public readonly OutgoingBudget $outgoingBudget;
+    public readonly BufferBudget $outgoingBudget;
+    public readonly BufferBudget $incomingBudget;
 
     public function __construct(
         public readonly WebSocketApplicationInterface $application,
         int $maxOutgoingBytes,
+        int $maxIncomingBytes,
     ) {
         $this->watchers = new SessionWatchers();
-        $this->outgoingBudget = new OutgoingBudget($maxOutgoingBytes);
+        $this->outgoingBudget = new BufferBudget($maxOutgoingBytes);
+        $this->incomingBudget = new BufferBudget($maxIncomingBytes);
     }
 
     public function pendingCount(): int

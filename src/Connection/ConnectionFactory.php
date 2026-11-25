@@ -22,7 +22,8 @@ final readonly class ConnectionFactory implements ConnectionFactoryInterface
         SocketInterface $socket,
         string $id,
         HandshakeRequest $request,
-        ?OutgoingBudget $outgoingBudget = null,
+        ?BufferBudget $outgoingBudget = null,
+        ?BufferBudget $incomingBudget = null,
     ): TransportConnectionInterface {
         return new Connection(
             socket: $socket,
@@ -33,6 +34,7 @@ final readonly class ConnectionFactory implements ConnectionFactoryInterface
             request: $request,
             maxOutgoingBufferSize: $this->options->maxOutgoingBufferSize,
             outgoingBudget: $outgoingBudget,
+            incomingBudget: $incomingBudget,
         );
     }
 }

@@ -52,7 +52,11 @@ final class Server implements WebSocketServerInterface
 
         $this->executing = true;
         try {
-            $state = new ServerRunState($application, $this->options->maxTotalOutgoingBufferSize);
+            $state = new ServerRunState(
+                $application,
+                $this->options->maxTotalOutgoingBufferSize,
+                $this->options->maxTotalIncomingBufferSize,
+            );
             $listener = $this->listeners->listen($this->options);
             $this->running = true;
 
@@ -213,6 +217,7 @@ final class Server implements WebSocketServerInterface
                 id: bin2hex(random_bytes(16)),
                 request: $response->request ?? throw new \LogicException('Accepted handshake requires a request.'),
                 outgoingBudget: $state->outgoingBudget,
+                incomingBudget: $state->incomingBudget,
             );
             $session = new ActiveSession($connection, $this->clock->nowMilliseconds());
             $this->cancelWatchers($state, $pending->watchers);

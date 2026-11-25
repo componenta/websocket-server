@@ -91,6 +91,7 @@ $app = new RoutedWebSocketApplication(
 | `MAX_CONNECTIONS` | `1024` |
 | `MAX_OUTGOING_BUFFER_SIZE` | `4194304` |
 | `MAX_TOTAL_OUTGOING_BUFFER_SIZE` | `67108864` |
+| `MAX_TOTAL_INCOMING_BUFFER_SIZE` | `67108864` |
 | `MAX_PENDING_HANDSHAKE_BYTES` | `8192` |
 | `PENDING_HANDSHAKE_TIMEOUT_MS` | `10000` |
 | `MAX_PENDING_CONNECTIONS` | `128` |
@@ -100,7 +101,7 @@ $app = new RoutedWebSocketApplication(
 | `SELECT_TIMEOUT_USEC` | `200000` |
 | `BACKLOG` | `128` |
 
-The shared outgoing limit counts queued wire bytes for established connections within a single server run, not total process memory. Frame and message payload limits apply to incoming data. Pending handshakes have their own size, count and absolute time limits; receiving more bytes does not reset their deadline. Heartbeats use matching Ping/Pong payloads, and the Pong timeout starts when the Ping has been fully written. Time intervals use a monotonic clock. A zero heartbeat interval or idle timeout disables that feature; a zero shutdown drain timeout disables waiting.
+The shared outgoing limit counts queued wire bytes for established connections within a single server run, not total process memory. The shared incoming limit counts undecoded bytes and retained fragmented payloads across established connections, including each newly received chunk before parsing. Exhaustion fails the affected connection with code 1009 when a close frame can be queued. It does not account for PHP object overhead, temporary copies or data retained by the application. Frame and message payload limits also apply. Pending handshakes have their own size, count and absolute time limits; receiving more bytes does not reset their deadline. Heartbeats use matching Ping/Pong payloads, and the Pong timeout starts when the Ping has been fully written. Time intervals use a monotonic clock. A zero heartbeat interval or idle timeout disables that feature; a zero shutdown drain timeout disables waiting.
 
 The default `ALLOWED_ORIGINS` permits any origin for compatibility. For browser-facing deployments configure an explicit allowlist of trusted origins. An empty list rejects all supplied origins; an absent Origin is still permitted for non-browser clients. Invalid origin entries are not silently converted to a wildcard. Origin validation is not authentication.
 
@@ -132,10 +133,10 @@ Custom runtime adapters need to implement the following contracts:
 | `MonotonicClockInterface` | Implement `nowMilliseconds(): float` as an elapsed-time source, not wall-clock time. The default uses `hrtime()`; a PSR-20 clock is no longer required. |
 | `TransportConnectionInterface` | Provide the stable restricted `application` handle, `setWriteNotifier()`, `readyToClose`, `failProtocol()`, `awaitingPong` and `pingSent`. Replace `appendBytes()` with `receiveBytes(string $bytes, Closure $onMessage): void`; dispatch messages synchronously in wire order before processing later frames. Notify the runtime when the queue becomes nonempty or closing begins. |
 | `PendingConnectionInterface` | Use `append(string $bytes)` and `expired(float $nowMs, int $timeoutMs)`; the former activity timestamps and redundant remote address are no longer exposed. |
-| `ConnectionFactoryInterface` | Accept the optional shared `OutgoingBudget` and enforce reservations for queued wire bytes until written or discarded. |
+| `ConnectionFactoryInterface` | Accept optional shared `BufferBudget` instances for outgoing and incoming bytes; enforce reservations until the bytes are sent, consumed or discarded. Message assemblers must be dedicated to a connection and report retained payload bytes via `bufferedBytes`. |
 | `WebSocketApplicationInvokerInterface` | Return a boolean from `connected()` and `received()` to indicate callback completion; false indicates reported failure. |
 | `SocketSelectorInterface` | Implement `assertSelectable()` to reject unusable targets before registering watchers. |
-| `WebSocketOptionsInterface` | Provide `closeHandshakeTimeoutMs` and `maxTotalOutgoingBufferSize`. |
+| `WebSocketOptionsInterface` | Provide `closeHandshakeTimeoutMs`, `maxTotalOutgoingBufferSize` and `maxTotalIncomingBufferSize`. |
 
 ## Boundary
 

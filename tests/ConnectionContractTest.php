@@ -416,7 +416,7 @@ describe('WebSocket connection contract', function () {
     });
 
     it('shares the outgoing byte limit and releases reservations on partial writes and close', function () {
-        $budget = new Componenta\WebSocket\Connection\OutgoingBudget(12);
+        $budget = new Componenta\WebSocket\Connection\BufferBudget(12);
         $socket = new ConnectionPartialWriteSocket('a', '127.0.0.1:12345',
             new SocketWriteResult(SocketWriteStatus::WRITTEN, 2));
         $request = new HandshakeRequest('GET', '/ws', '/ws', []);
@@ -456,7 +456,7 @@ describe('WebSocket connection contract', function () {
     });
 
     it('accounts for incomplete frames and fragmented messages in a shared incoming budget', function () {
-        $budget = new Componenta\WebSocket\Connection\BufferBudget(32);
+        $budget = new Componenta\WebSocket\Connection\BufferBudget(34);
         $codec = new FrameCodec();
         $request = new HandshakeRequest('GET', '/ws', '/ws', []);
         $a = new Connection(new ConnectionPartialWriteSocket('a'), $codec, new MessageAssembler(1024), 1024, 'a', $request,
@@ -466,6 +466,8 @@ describe('WebSocket connection contract', function () {
         $c = new Connection(new ConnectionPartialWriteSocket('c'), $codec, new MessageAssembler(1024), 1024, 'c', $request,
             incomingBudget: $budget);
 
+        $d = new Connection(new ConnectionPartialWriteSocket('d'), $codec, new MessageAssembler(1024), 1024, 'd', $request,
+            incomingBudget: $budget);
         $first = $codec->encode(new Frame(Opcode::BINARY, str_repeat('a', 12), final: false), true, 'mask');
         $second = $codec->encode(new Frame(Opcode::BINARY, str_repeat('b', 16)), true, 'mask');
         $third = $codec->encode(new Frame(Opcode::TEXT, 'hello'), true, 'mask');
@@ -476,20 +478,23 @@ describe('WebSocket connection contract', function () {
 
             expect(fn () => ReceivedMessages::collect($c, $third))
                 ->toThrow(Componenta\WebSocket\Exception\ProtocolException::class, 'Incoming WebSocket buffer budget is full.');
+            $c->failProtocol(CloseCode::PAYLOAD_TOO_LARGE, 'budget');
+            $c->markClosed();
 
             // Completion and delivery free the fragment reservation before invoking the callback.
             $end = $codec->encode(new Frame(Opcode::CONTINUATION), true, 'mask');
-            $a->receiveBytes($end, function (Message $message) use ($c, $third): void {
+            $a->receiveBytes($end, function (Message $message) use ($d, $third): void {
                 expect($message->payload)->toBe(str_repeat('a', 12))
-                    ->and(ReceivedMessages::collect($c, $third)[0]->payload)->toBe('hello');
+                    ->and(ReceivedMessages::collect($d, $third)[0]->payload)->toBe('hello');
             });
 
             expect(ReceivedMessages::collect($b, substr($second, 16))[0]->payload)->toBe(str_repeat('b', 16));
-            expect(ReceivedMessages::collect($c, $third)[0]->payload)->toBe('hello');
+            expect(ReceivedMessages::collect($d, $third)[0]->payload)->toBe('hello');
         } finally {
             $a->markClosed();
             $b->markClosed();
             $c->markClosed();
+            $d->markClosed();
         }
     });
 
@@ -501,6 +506,8 @@ describe('WebSocket connection contract', function () {
             incomingBudget: $budget);
         $b = new Connection(new ConnectionPartialWriteSocket('b'), $codec, new MessageAssembler(1024), 1024, 'b', $request,
             incomingBudget: $budget);
+        $c = new Connection(new ConnectionPartialWriteSocket('c'), $codec, new MessageAssembler(1024), 1024, 'c', $request,
+            incomingBudget: $budget);
         $first = $codec->encode(new Frame(Opcode::BINARY, str_repeat('a', 10), final: false), true, 'mask');
         $message = $codec->encode(new Frame(Opcode::TEXT, 'hello'), true, 'mask');
 
@@ -509,18 +516,21 @@ describe('WebSocket connection contract', function () {
             expect(fn () => ReceivedMessages::collect($b, $message))
                 ->toThrow(Componenta\WebSocket\Exception\ProtocolException::class);
 
+            $b->failProtocol(CloseCode::PAYLOAD_TOO_LARGE, 'budget');
+            $b->markClosed();
             $a->failProtocol(CloseCode::PROTOCOL_ERROR, 'invalid');
+            expect(ReceivedMessages::collect($c, $message)[0]->payload)->toBe('hello');
             $a->markClosed();
             $a->markClosed();
 
-            expect(ReceivedMessages::collect($b, $message)[0]->payload)->toBe('hello');
-            ReceivedMessages::collect($b, substr($message, 0, 8));
-            $b->markClosed();
+            ReceivedMessages::collect($c, substr($message, 0, 8));
+            $c->markClosed();
             expect($budget->reserve(16))->toBeTrue();
             $budget->release(16);
         } finally {
             $a->markClosed();
             $b->markClosed();
+            $c->markClosed();
         }
     });
 
