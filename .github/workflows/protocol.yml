@@ -1,0 +1,75 @@
+name: Protocol conformance
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/protocol.yml'
+      - 'tests/Conformance/**'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'composer.json'
+      - '.github/workflows/protocol.yml'
+      - 'tests/Conformance/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protocol-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  autobahn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+      - run: composer install --no-interaction --prefer-dist
+      - name: Run Autobahn core protocol cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          reports="$RUNNER_TEMP/autobahn-reports"
+          mkdir -p "$reports"
+
+          php tests/Conformance/echo-server.php >"$reports/server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
+
+          ready=0
+          for attempt in {1..50}; do
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat "$reports/server.log"
+              exit 1
+            fi
+            if (echo >/dev/tcp/127.0.0.1/9001) 2>/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 0.1
+          done
+          test "$ready" = 1
+
+          docker run --rm --network host \
+            -v "$PWD/tests/Conformance:/config:ro" \
+            -v "$reports:/reports" \
+            --entrypoint wstest \
+            crossbario/autobahn-testsuite:25.10.1 \
+            -m fuzzingclient -s /config/fuzzingclient.json \
+            2>&1 | tee "$reports/suite.log"
+
+          kill -0 "$server_pid"
+          php tests/Conformance/check-report.php "$reports/index.json" "$reports/suite.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: autobahn-reports
+          path: ${{ runner.temp }}/autobahn-reports
+          if-no-files-found: error

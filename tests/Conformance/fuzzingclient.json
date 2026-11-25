@@ -1,0 +1,21 @@
+{
+  "options": {
+    "failByDrop": false
+  },
+  "outdir": "/reports",
+  "servers": [
+    {
+      "agent": "componenta-websocket-server",
+      "url": "ws://127.0.0.1:9001/"
+    }
+  ],
+  "cases": [
+    "*"
+  ],
+  "exclude-cases": [
+    "9.*",
+    "12.*",
+    "13.*"
+  ],
+  "exclude-agent-cases": {}
+}
