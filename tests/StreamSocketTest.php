@@ -15,6 +15,17 @@ final class BlockingOnlyWebSocketTestStream
     public function stream_eof(): bool { return false; }
 }
 
+/** Stream-level I/O failures without network timing dependencies. */
+final class FailingWebSocketTestStream
+{
+    public mixed $context = null;
+    public function stream_open(string $path, string $mode, int $options, ?string &$openedPath): bool { return true; }
+    public function stream_set_option(int $option, int $arg1, ?int $arg2): bool { return true; }
+    public function stream_eof(): bool { return false; }
+    public function stream_read(int $count): false { return false; }
+    public function stream_write(string $bytes): false { return false; }
+}
+
 describe('Stream socket lifecycle', function () {
     it('keeps closed sockets terminal and reports typed read and write outcomes', function () {
         $resources = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
@@ -181,6 +192,75 @@ describe('Stream socket lifecycle', function () {
             expect(is_resource($resource))->toBeTrue();
         } finally {
             fclose($resource);
+        }
+    });
+
+
+    it('reports native stream read and write failures through their typed results', function () {
+        $scheme = 'wsfailuretest';
+        expect(stream_wrapper_register($scheme, FailingWebSocketTestStream::class))->toBeTrue();
+        $resource = null;
+        $socket = null;
+        try {
+            $resource = fopen($scheme . '://resource', 'r+');
+            expect(is_resource($resource))->toBeTrue();
+            $socket = new StreamSocket($resource, 'local');
+            $read = $socket->read(32);
+            $write = $socket->write('data');
+
+            expect($read->status)->toBe(SocketReadStatus::ERROR)
+                ->and($read->bytes)->toBe('')
+                ->and($read->reason)->not->toBeNull()
+                ->and($write->status)->toBe(SocketWriteStatus::ERROR)
+                ->and($write->writtenBytes)->toBe(0)
+                ->and($write->reason)->not->toBeNull();
+        } finally {
+            $socket?->close();
+            if (is_resource($resource)) {
+                fclose($resource);
+            }
+            stream_wrapper_unregister($scheme);
+        }
+    });
+
+    it('reports real socket backpressure without blocking the writer', function () {
+        $resources = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        expect($resources)->not->toBeFalse();
+        $socket = new StreamSocket($resources[0], 'local');
+        stream_set_blocking($resources[1], false);
+        try {
+            $payload = str_repeat('x', 65_536);
+            $sent = 0;
+            $blocked = false;
+            for ($i = 0; $i < 1024; $i++) {
+                $result = $socket->write($payload);
+                if ($result->status === SocketWriteStatus::BLOCKED) {
+                    $blocked = true;
+                    expect($result->writtenBytes)->toBe(0);
+                    break;
+                }
+                expect($result->status)->toBe(SocketWriteStatus::WRITTEN)
+                    ->and($result->writtenBytes)->toBeGreaterThan(0)
+                    ->and($result->writtenBytes)->toBeLessThanOrEqual(strlen($payload));
+                $sent += $result->writtenBytes;
+            }
+            expect($blocked)->toBeTrue()->and($sent)->toBeGreaterThan(0);
+            $drained = 0;
+            for ($i = 0; $i < 2048 && $drained < $sent; $i++) {
+                $bytes = fread($resources[1], 65_536);
+                expect(is_string($bytes))->toBeTrue();
+                if ($bytes === '') {
+                    break;
+                }
+                expect($bytes)->toBe(str_repeat('x', strlen($bytes)));
+                $drained += strlen($bytes);
+            }
+            expect($drained)->toBe($sent)
+                ->and($socket->write('resume')->writtenBytes)->toBe(6)
+                ->and(fread($resources[1], 6))->toBe('resume');
+        } finally {
+            $socket->close();
+            fclose($resources[1]);
         }
     });
 

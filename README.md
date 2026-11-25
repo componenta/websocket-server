@@ -120,7 +120,7 @@ The default `ALLOWED_ORIGINS` permits any origin for compatibility. For browser-
 - `WebSocketApplicationResolverInterface`
 - `WebSocketApplicationInvokerInterface`
 
-The default server uses stream sockets and a select-based event loop. IPv6 bind addresses may be supplied with or without brackets. A stopped server does not stop unrelated loop work. Registered timers, watchers and their owning event loop cannot be cloned. `MAX_CONNECTIONS` is an application admission limit, not a guarantee that the operating system or `stream_select()` can support that many file descriptors. Unselectable sockets are rejected at admission. For larger deployments, provide a compatible selector or event loop.
+The default server uses stream sockets and a select-based event loop. IPv6 bind addresses may be supplied with or without brackets. A stopped server does not stop unrelated loop work. Registered timers, watchers, their owning event loop, and live stream socket and listener wrappers cannot be cloned. Default stream wrappers reject resources that refuse nonblocking mode; on construction failure the supplied resource remains owned by its caller. Pending handshake read errors are reported without announcing an application connection. `MAX_CONNECTIONS` is an application admission limit, not a guarantee that the operating system or `stream_select()` can support that many file descriptors. Unselectable sockets are rejected at admission. For larger deployments, provide a compatible selector or event loop.
 
 ## Migrating custom runtime implementations
 

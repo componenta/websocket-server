@@ -148,4 +148,33 @@ describe('WebSocket stream socket selector', function () {
             fclose($resources[1]);
         }
     });
+
+    it('rejects negative polling timeouts even when no descriptors are registered', function () {
+        expect(fn () => (new StreamSocketSelector())->select([], [], [], -1))
+            ->toThrow(InvalidArgumentException::class);
+    });
+
+    it('rejects unsupported non-stream listener and socket implementations', function () {
+        $selector = new StreamSocketSelector();
+        $listener = new class implements \Componenta\WebSocket\Socket\SocketListenerInterface {
+            public string $id = 'listener';
+            public function accept(): ?SocketInterface { return null; }
+            public function close(): void {}
+        };
+        $socket = new class implements SocketInterface {
+            public string $id = 'socket';
+            public string $remoteAddress = 'local';
+            public bool $eof { get => false; }
+            public function read(int $maxBytes): SocketReadResult { return new SocketReadResult(SocketReadStatus::EMPTY); }
+            public function write(string $bytes): SocketWriteResult { return new SocketWriteResult(SocketWriteStatus::WRITTEN, strlen($bytes)); }
+            public function close(): void {}
+        };
+
+        expect(fn () => $selector->assertSelectable($listener))->toThrow(InvalidArgumentException::class);
+        expect(fn () => $selector->assertSelectable($socket))->toThrow(InvalidArgumentException::class);
+        expect(fn () => $selector->select([$listener], [], [], 0))->toThrow(InvalidArgumentException::class);
+        expect(fn () => $selector->select([], [$socket], [], 0))->toThrow(InvalidArgumentException::class);
+        expect(fn () => $selector->select([], [], [$socket], 0))->toThrow(InvalidArgumentException::class);
+    });
+
 });

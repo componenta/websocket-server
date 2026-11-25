@@ -1635,4 +1635,58 @@ describe('WebSocket server', function () {
         }
     })->with(['read error' => true, 'normal EOF' => false]);
 
+
+    it('expires blocked handshake responses without announcing an application connection', function () {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, selectTimeoutUsec: 0,
+            pendingHandshakeTimeoutMs: 30, shutdownDrainTimeoutMs: 0);
+        $blocked = array_fill(0, 100, new SocketWriteResult(SocketWriteStatus::BLOCKED));
+        $socket = new ServerScriptedSocket('pending', 'local', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+        ], $blocked);
+        $listener = new ServerQueueListener('listener', $socket);
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server($options, new ServerBackpressureListenerFactory($listener), $loop,
+            new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock);
+        $application = new ServerRuntimeApplication();
+        $application->server = $server;
+        $loop->delay(200, fn () => $server->stop());
+
+        $server->run($application);
+
+        expect($socket->writeCalls)->toBeGreaterThan(0)
+            ->and($socket->writeCalls)->toBeLessThan(100)
+            ->and($socket->closed)->toBeTrue()
+            ->and($socket->written)->toBe('')
+            ->and($application->connected)->toBe(0)
+            ->and($application->disconnected)->toBe(0)
+            ->and($application->errors)->toBe([]);
+    });
+
+    it('rejects a pending request beyond its handshake size limit before application activation', function () {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(maxPendingHandshakeBytes: 32, heartbeatIntervalMs: 0,
+            selectTimeoutUsec: 0, shutdownDrainTimeoutMs: 0);
+        $socket = new ServerScriptedSocket('pending', 'local', [
+            new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake()),
+        ]);
+        $listener = new ServerQueueListener('listener', $socket);
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server($options, new ServerBackpressureListenerFactory($listener), $loop,
+            new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock);
+        $application = new ServerRuntimeApplication();
+        $application->server = $server;
+        $loop->delay(100, fn () => $server->stop());
+
+        $server->run($application);
+
+        expect($socket->written)->toStartWith("HTTP/1.1 431 ")
+            ->and($socket->closed)->toBeTrue()
+            ->and($application->connected)->toBe(0)
+            ->and($application->disconnected)->toBe(0)
+            ->and($application->errors)->toBe([]);
+    });
+
 });

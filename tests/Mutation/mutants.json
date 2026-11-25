@@ -158,5 +158,29 @@
     "replacement": "if ($connection->needsWrite) {",
     "test": "ServerTest.php",
     "filter": "registers a writer for a reply only if the immediate flush leaves queued bytes"
+  },
+  {
+    "id": "nonblocking-client-stream",
+    "file": "Socket/StreamSocket.php",
+    "original": "if (!stream_set_blocking($this->resource, false)) {",
+    "replacement": "if (false) {",
+    "test": "StreamSocketTest.php",
+    "filter": "rejects stream resources that refuse nonblocking mode"
+  },
+  {
+    "id": "nonblocking-listener-stream",
+    "file": "Socket/StreamSocketListener.php",
+    "original": "if (!stream_set_blocking($this->resource, false)) {",
+    "replacement": "if (false) {",
+    "test": "StreamSocketTest.php",
+    "filter": "rejects stream resources that refuse nonblocking mode"
+  },
+  {
+    "id": "pending-read-failure",
+    "file": "Transport/Server.php",
+    "original": "throw new \\RuntimeException($read->reason ?? 'Unable to read WebSocket handshake.');",
+    "replacement": "$this->discardPending($state, $session);\n                return;",
+    "test": "ServerTest.php",
+    "filter": "reports pending socket read errors without treating an ordinary peer disconnect as a failure"
   }
 ]
