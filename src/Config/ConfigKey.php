@@ -24,5 +24,6 @@ final class ConfigKey
     public const string SHUTDOWN_DRAIN_TIMEOUT_MS = 'componenta.websocket.shutdown_drain_timeout_ms';
     public const string MAX_CONNECTIONS = 'componenta.websocket.max_connections';
     public const string SELECT_TIMEOUT_USEC = 'componenta.websocket.select_timeout_usec';
+    public const string CLOSE_HANDSHAKE_TIMEOUT_MS = 'componenta.websocket.close_handshake_timeout_ms';
     public const string BACKLOG = 'componenta.websocket.backlog';
 }

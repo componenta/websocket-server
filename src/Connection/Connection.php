@@ -7,6 +7,7 @@ namespace Componenta\WebSocket\Connection;
 use Componenta\WebSocket\Exception\ProtocolException;
 use Componenta\WebSocket\Protocol\CloseCode;
 use Componenta\WebSocket\Protocol\CloseInfo;
+use Componenta\WebSocket\Protocol\CloseInitiator;
 use Componenta\WebSocket\Protocol\Frame;
 use Componenta\WebSocket\Protocol\FrameCodecInterface;
 use Componenta\WebSocket\Protocol\Handshake\HandshakeRequest;
@@ -23,6 +24,13 @@ final class Connection implements TransportConnectionInterface
     private int $outgoingOffset = 0;
     private ?\Closure $writeNotifier = null;
     private ?ConnectionInterface $applicationHandle = null;
+    private bool $peerCloseReceived = false;
+    private bool $protocolFailed = false;
+
+    /** A complete closing handshake, or a flushed failure close. */
+    public bool $readyToClose {
+        get => $this->closing && !$this->needsWrite && ($this->peerCloseReceived || $this->protocolFailed);
+    }
 
     public ConnectionInterface $application {
         get => $this->applicationHandle ??= new ApplicationConnection($this);
@@ -87,7 +95,7 @@ final class Connection implements TransportConnectionInterface
             return SendResult::rejected('Connection is not open.', $this->queuedBytes);
         }
 
-        $result = $this->queue(new Frame(Opcode::CLOSE, $this->createClosePayload($code, $reason)));
+        $result = $this->queue(new Frame(Opcode::CLOSE, $this->createClosePayload($code, $reason)), notify: false);
 
         if (!$result->accepted) {
             return $result;
@@ -95,6 +103,7 @@ final class Connection implements TransportConnectionInterface
 
         $this->state = ConnectionState::CLOSING;
         $this->closeInfo = CloseInfo::local($code, $reason);
+        $this->notifyWrite();
 
         return $result;
     }
@@ -104,6 +113,10 @@ final class Connection implements TransportConnectionInterface
      */
     public function appendBytes(string $bytes): array
     {
+        if ($this->closed || $this->peerCloseReceived || $this->protocolFailed) {
+            return [];
+        }
+
         $this->buffer .= $bytes;
         $messages = [];
 
@@ -112,6 +125,12 @@ final class Connection implements TransportConnectionInterface
 
             if ($message !== null) {
                 $messages[] = $message;
+            }
+
+            if ($this->peerCloseReceived) {
+                $this->buffer = '';
+                $this->assembler->reset();
+                break;
             }
         }
 
@@ -159,10 +178,26 @@ final class Connection implements TransportConnectionInterface
         }
     }
 
+    public function failProtocol(int $code, string $reason): SendResult
+    {
+        $this->protocolFailed = true;
+        $this->buffer = '';
+        $this->assembler->reset();
+
+        return $this->close($code, $reason);
+    }
+
     public function markClosed(?CloseInfo $close = null): void
     {
+        if ($this->closed) {
+            return;
+        }
+
+        $info = $close ?? $this->closeInfo ?? CloseInfo::transport('Connection closed.');
+        $clean = $this->peerCloseReceived && !$this->protocolFailed && $this->closing && !$this->needsWrite
+            && $info->initiator !== CloseInitiator::TRANSPORT;
         $this->state = ConnectionState::CLOSED;
-        $this->closeInfo ??= $close ?? CloseInfo::transport('Connection closed.');
+        $this->closeInfo = $info->withClean($clean);
         $this->writeNotifier = null;
         $this->buffer = '';
         $this->resetOutgoingBuffer();
@@ -174,7 +209,7 @@ final class Connection implements TransportConnectionInterface
         return match ($frame->opcode) {
             Opcode::TEXT,
             Opcode::BINARY,
-            Opcode::CONTINUATION => $this->assembler->push($frame),
+            Opcode::CONTINUATION => $this->closing ? null : $this->assembler->push($frame),
             Opcode::PING => $this->handlePingFrame($frame),
             Opcode::PONG => $this->handlePongFrame(),
             Opcode::CLOSE => $this->handleCloseFrame($frame),
@@ -201,10 +236,12 @@ final class Connection implements TransportConnectionInterface
 
     private function handleCloseFrame(Frame $frame): ?Message
     {
-        $this->closeInfo ??= $this->parseCloseInfo($frame->payload);
+        $peerClose = $this->parseCloseInfo($frame->payload);
+        $this->peerCloseReceived = true;
+        $this->closeInfo ??= $peerClose;
 
         if ($this->state === ConnectionState::OPEN) {
-            $result = $this->queue(new Frame(Opcode::CLOSE, substr($frame->payload, 0, 125)));
+            $result = $this->queue(new Frame(Opcode::CLOSE, $frame->payload), notify: false);
 
             if (!$result->accepted) {
                 $this->closeInfo = CloseInfo::transport('Unable to queue WebSocket close frame.');
@@ -212,18 +249,28 @@ final class Connection implements TransportConnectionInterface
             }
 
             $this->state = ConnectionState::CLOSING;
+            $this->notifyWrite();
         }
 
         return null;
     }
 
-    private function queue(Frame $frame): SendResult
+    private function notifyWrite(): void
+    {
+        if ($this->writeNotifier !== null) {
+            ($this->writeNotifier)();
+        }
+    }
+
+    private function queue(Frame $frame, bool $notify = true): SendResult
     {
         if ($this->state === ConnectionState::CLOSED) {
             return SendResult::rejected('Connection is closed.', $this->queuedBytes);
         }
 
-        if ($this->state === ConnectionState::CLOSING && $frame->opcode !== Opcode::CLOSE) {
+        if ($this->state === ConnectionState::CLOSING && $frame->opcode !== Opcode::CLOSE
+            && !($frame->opcode === Opcode::PONG && !$this->peerCloseReceived)
+        ) {
             return SendResult::rejected('Connection is closing.', $this->queuedBytes);
         }
 
@@ -239,8 +286,8 @@ final class Connection implements TransportConnectionInterface
         if (!$this->needsWrite) {
             $this->outgoingBuffer = $encoded;
             $this->outgoingOffset = 0;
-            if ($this->writeNotifier !== null) {
-                ($this->writeNotifier)();
+            if ($notify) {
+                $this->notifyWrite();
             }
 
             return SendResult::accepted($queuedBytes);
@@ -280,7 +327,7 @@ final class Connection implements TransportConnectionInterface
         $length = strlen($payload);
 
         if ($length === 0) {
-            return CloseInfo::remote();
+            return CloseInfo::remote(CloseCode::NO_STATUS);
         }
 
         if ($length === 1) {
@@ -295,7 +342,7 @@ final class Connection implements TransportConnectionInterface
         }
 
         if (!$this->isValidUtf8($reason)) {
-            throw new ProtocolException('WebSocket close frame reason must be valid UTF-8.');
+            throw new ProtocolException('WebSocket close frame reason must be valid UTF-8.', CloseCode::INVALID_PAYLOAD_DATA);
         }
 
         return CloseInfo::remote($code, $reason);

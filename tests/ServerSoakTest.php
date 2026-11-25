@@ -56,7 +56,10 @@ final class ServerSoakSocket implements SocketInterface
         public string $remoteAddress,
         string $handshake,
     ) {
-        $this->reads = [new SocketReadResult(SocketReadStatus::DATA, $handshake)];
+        $this->reads = [
+            new SocketReadResult(SocketReadStatus::DATA, $handshake),
+            new SocketReadResult(SocketReadStatus::DATA, "\x88\x82mask" . ("\x03\xe8" ^ 'ma')),
+        ];
     }
 
     public function read(int $maxBytes): SocketReadResult

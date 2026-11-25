@@ -292,4 +292,59 @@ describe('WebSocket connection contract', function () {
             ->and($connection->context->get('user'))->toBe(42);
         $connection->socket->close();
     });
+
+    it('waits for the peer close after sending a local close frame', function () {
+        $connection = contractTestConnection();
+        $codec = new FrameCodec();
+        $connection->close(CloseCode::NORMAL, 'done');
+        $connection->flush();
+
+        expect($connection->readyToClose)->toBeFalse()
+            ->and($connection->closeInfo?->clean)->toBeFalse();
+
+        $connection->appendBytes($codec->encode(new Frame(Opcode::CLOSE, pack('n', 1000)), true, 'mask'));
+
+        expect($connection->readyToClose)->toBeTrue();
+        $connection->markClosed();
+        expect($connection->closeInfo?->clean)->toBeTrue();
+        $connection->socket->close();
+    });
+
+    it('ignores data after a received close in the same socket read', function () {
+        $connection = contractTestConnection();
+        $codec = new FrameCodec();
+        $bytes = $codec->encode(new Frame(Opcode::TEXT, 'before'), true, 'mask')
+            . $codec->encode(new Frame(Opcode::CLOSE, pack('n', 1000)), true, 'mask')
+            . $codec->encode(new Frame(Opcode::TEXT, 'after'), true, 'mask');
+
+        $messages = $connection->appendBytes($bytes);
+
+        expect(array_map(static fn (Message $message) => $message->payload, $messages))->toBe(['before'])
+            ->and($connection->readyToClose)->toBeFalse();
+        $connection->flush();
+        expect($connection->readyToClose)->toBeTrue();
+        $connection->socket->close();
+    });
+
+    it('validates the peer close payload even after sending a close', function () {
+        $connection = contractTestConnection();
+        $connection->close();
+        $connection->flush();
+        $bytes = (new FrameCodec())->encode(new Frame(Opcode::CLOSE, "\x01"), true, 'mask');
+
+        expect(fn () => $connection->appendBytes($bytes))->toThrow(Componenta\WebSocket\Exception\ProtocolException::class)
+            ->and($connection->readyToClose)->toBeFalse();
+        $connection->socket->close();
+    });
+
+    it('records an abnormal transport failure instead of a clean requested close', function () {
+        $connection = contractTestConnection();
+        $connection->close();
+        $connection->markClosed(CloseInfo::transport('write failed'));
+
+        expect($connection->closeInfo?->code)->toBe(CloseCode::ABNORMAL)
+            ->and($connection->closeInfo?->reason)->toBe('write failed')
+            ->and($connection->closeInfo?->clean)->toBeFalse();
+        $connection->socket->close();
+    });
 });

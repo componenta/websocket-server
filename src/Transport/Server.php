@@ -43,6 +43,9 @@ final class Server implements WebSocketServerInterface
     /** @var array<int|string, float> */
     private array $awaitingPongSince = [];
 
+    /** @var array<int|string, LoopTimerInterface> */
+    private array $closeTimers = [];
+
     public function __construct(
         private readonly WebSocketOptionsInterface $options,
         private readonly SocketListenerFactoryInterface $listeners,
@@ -70,6 +73,7 @@ final class Server implements WebSocketServerInterface
         $lifecycleTimer = null;
         $this->lastActivityAt = [];
         $this->awaitingPongSince = [];
+        $this->closeTimers = [];
         $this->running = true;
 
         try {
@@ -207,7 +211,7 @@ final class Server implements WebSocketServerInterface
         $now = $this->nowMs();
 
         foreach ($connections as $id => $connection) {
-            if ($connection->closed) {
+            if ($connection->closed || $connection->closing) {
                 continue;
             }
 
@@ -739,9 +743,25 @@ final class Server implements WebSocketServerInterface
             },
         );
         $accepted->setWriteNotifier(function () use ($accepted, &$connections, &$readWatchers, &$writeWatchers, $application): void {
-            if ($this->running && isset($connections[$accepted->socket->id])) {
-                $this->ensureWriteWatcher($accepted, $connections, $readWatchers, $writeWatchers, $application);
+            $id = $accepted->socket->id;
+            if (!$this->running || !isset($connections[$id])) {
+                return;
             }
+
+            if ($accepted->closing && !isset($this->closeTimers[$id])) {
+                $this->closeTimers[$id] = $this->loop->delay(
+                    $this->options->closeHandshakeTimeoutMs,
+                    function () use ($accepted, &$connections, &$readWatchers, &$writeWatchers, $application): void {
+                        $this->closeConnection(
+                            $accepted, $connections, $readWatchers, $writeWatchers, $application,
+                            $accepted->closeInfo ?? CloseInfo::transport('WebSocket close handshake timed out.'),
+                        );
+                    },
+                );
+                unset($this->awaitingPongSince[$id]);
+            }
+
+            $this->ensureWriteWatcher($accepted, $connections, $readWatchers, $writeWatchers, $application);
         });
         $this->applications->connected($application, $accepted->application);
         $this->flushOrWatchConnection($accepted, $connections, $readWatchers, $writeWatchers, $application);
@@ -793,7 +813,7 @@ final class Server implements WebSocketServerInterface
                 $readWatchers,
                 $writeWatchers,
                 $application,
-                $connection->closeInfo ?? CloseInfo::transport($read->reason ?? 'Socket read failed.'),
+                CloseInfo::transport($read->reason ?? 'Socket read failed.'),
             );
             return;
         }
@@ -805,7 +825,7 @@ final class Server implements WebSocketServerInterface
                 $readWatchers,
                 $writeWatchers,
                 $application,
-                $connection->closeInfo ?? CloseInfo::transport($read->reason ?? 'Socket closed.'),
+                CloseInfo::transport($read->reason ?? 'Socket closed.'),
             );
             return;
         }
@@ -847,9 +867,10 @@ final class Server implements WebSocketServerInterface
         }
 
         foreach ($messages as $message) {
+            $previousState = $connection->state;
             $this->applications->received($application, $connection->application, $message);
 
-            if (!$this->running) {
+            if (!$this->running || $connection->state !== $previousState) {
                 break;
             }
         }
@@ -869,6 +890,14 @@ final class Server implements WebSocketServerInterface
         array &$writeWatchers,
         WebSocketApplicationInterface $application,
     ): void {
+        if ($connection->readyToClose) {
+            $this->closeConnection(
+                $connection, $connections, $readWatchers, $writeWatchers, $application,
+                $connection->closeInfo ?? CloseInfo::local(),
+            );
+            return;
+        }
+
         if (!$connection->needsWrite) {
             return;
         }
@@ -894,10 +923,10 @@ final class Server implements WebSocketServerInterface
         WebSocketApplicationInterface $application,
         ProtocolException $e,
     ): void {
-        $result = $connection->close($e->closeCode, $e->getMessage());
+        $result = $connection->failProtocol($e->closeCode, 'WebSocket protocol error');
         $this->fail($application, WebSocketErrorPhase::READ, $connection, $e);
 
-        if (!$result->accepted && !$connection->needsWrite) {
+        if (!$result->accepted) {
             $this->closeConnection(
                 $connection,
                 $connections,
@@ -1032,7 +1061,7 @@ final class Server implements WebSocketServerInterface
             unset($writeWatchers[$id]);
         }
 
-        if ($connection->closing && !$connection->needsWrite) {
+        if ($connection->readyToClose) {
             $this->closeConnection(
                 $connection,
                 $connections,
@@ -1134,6 +1163,8 @@ final class Server implements WebSocketServerInterface
         }
 
         $id = $connection->socket->id;
+        ($this->closeTimers[$id] ?? null)?->cancel();
+        unset($this->closeTimers[$id]);
         ($readWatchers[$id] ?? null)?->cancel();
         ($writeWatchers[$id] ?? null)?->cancel();
         unset($readWatchers[$id], $writeWatchers[$id], $connections[$id]);

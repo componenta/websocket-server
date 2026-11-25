@@ -32,6 +32,7 @@ final readonly class WebSocketOptions implements WebSocketOptionsInterface
         public int $maxConnections = 1024,
         public int $selectTimeoutUsec = 200_000,
         public int $backlog = 128,
+        public int $closeHandshakeTimeoutMs = 5_000,
     ) {
         foreach ($this->allowedOrigins as $origin) {
             if (!is_string($origin) || $origin === '' || trim($origin) !== $origin) {
@@ -95,6 +96,10 @@ final readonly class WebSocketOptions implements WebSocketOptionsInterface
             throw new \InvalidArgumentException('WebSocket select timeout must be zero or positive.');
         }
 
+        if ($this->closeHandshakeTimeoutMs < 1) {
+            throw new \InvalidArgumentException('WebSocket close handshake timeout must be positive.');
+        }
+
         if ($this->backlog < 1) {
             throw new \InvalidArgumentException('WebSocket backlog must be positive.');
         }
@@ -120,6 +125,7 @@ final readonly class WebSocketOptions implements WebSocketOptionsInterface
             maxConnections: $config->int(ConfigKey::MAX_CONNECTIONS, 1024),
             selectTimeoutUsec: $config->int(ConfigKey::SELECT_TIMEOUT_USEC, 200_000),
             backlog: $config->int(ConfigKey::BACKLOG, 128),
+            closeHandshakeTimeoutMs: $config->int(ConfigKey::CLOSE_HANDSHAKE_TIMEOUT_MS, 5_000),
         );
     }
 

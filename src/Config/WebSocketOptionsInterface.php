@@ -42,4 +42,6 @@ interface WebSocketOptionsInterface
     public int $selectTimeoutUsec { get; }
 
     public int $backlog { get; }
+
+    public int $closeHandshakeTimeoutMs { get; }
 }

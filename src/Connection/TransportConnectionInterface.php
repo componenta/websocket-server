@@ -15,7 +15,7 @@ interface TransportConnectionInterface extends ConnectionInterface
     /** Stable restricted connection handle passed to application callbacks. */
     public ConnectionInterface $application { get; }
 
-    /** Notify the runtime when an outgoing queue becomes nonempty. */
+    /** Notify the runtime when an outgoing queue becomes nonempty or closing begins. */
     public function setWriteNotifier(?\Closure $notifier): void;
 
     public bool $needsWrite { get; }
@@ -23,6 +23,11 @@ interface TransportConnectionInterface extends ConnectionInterface
     public int $queuedBytes { get; }
 
     public bool $closing { get; }
+
+    public bool $readyToClose { get; }
+
+    /** Fail the protocol and stop accepting further application messages. */
+    public function failProtocol(int $code, string $reason): SendResult;
 
     public bool $closed { get; }
 

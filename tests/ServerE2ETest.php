@@ -261,12 +261,18 @@ describe('WebSocket server e2e', function () {
             ));
 
             $frames = websocketE2EReadFrames($client, 2);
-            fclose($client);
 
             expect($frames)->toHaveCount(2)
                 ->and($frames[0]->opcode)->toBe(Opcode::TEXT)
                 ->and($frames[0]->payload)->toBe('echo:hello')
                 ->and($frames[1]->opcode)->toBe(Opcode::CLOSE);
+
+            fwrite($client, (new FrameCodec())->encode(
+                new Componenta\WebSocket\Protocol\Frame(Opcode::CLOSE, $frames[1]->payload),
+                masked: true,
+                maskKey: 'mask',
+            ));
+            fclose($client);
 
             $deadline = microtime(true) + 5;
 

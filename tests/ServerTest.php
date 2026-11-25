@@ -960,6 +960,7 @@ describe('WebSocket server', function () {
             pongTimeoutMs: 1,
             idleTimeoutMs: 1,
             selectTimeoutUsec: 0,
+            closeHandshakeTimeoutMs: 2,
             shutdownDrainTimeoutMs: 0,
         );
         $socket = new ServerBackpressureSocket(
@@ -996,7 +997,7 @@ describe('WebSocket server', function () {
         expect($socket->written)->toContain("\x88")
             ->and($application->connected)->toBe(1)
             ->and($application->disconnected)->toBe(1)
-            ->and($application->lastClose?->clean)->toBeTrue()
+            ->and($application->lastClose?->clean)->toBeFalse()
             ->and($application->lastClose?->reason)->toBe('Idle timeout')
             ->and($socket->closed)->toBeTrue();
     });
