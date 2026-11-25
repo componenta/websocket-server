@@ -12,6 +12,12 @@ interface TransportConnectionInterface extends ConnectionInterface
 {
     public SocketInterface $socket { get; }
 
+    /** Stable restricted connection handle passed to application callbacks. */
+    public ConnectionInterface $application { get; }
+
+    /** Notify the runtime when an outgoing queue becomes nonempty. */
+    public function setWriteNotifier(?\Closure $notifier): void;
+
     public bool $needsWrite { get; }
 
     public int $queuedBytes { get; }

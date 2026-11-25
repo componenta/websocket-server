@@ -1000,4 +1000,58 @@ describe('WebSocket server', function () {
             ->and($application->lastClose?->reason)->toBe('Idle timeout')
             ->and($socket->closed)->toBeTrue();
     });
+
+    it('writes to another idle connection without waiting for an event on that connection', function () {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, idleTimeoutMs: 0, shutdownDrainTimeoutMs: 0, selectTimeoutUsec: 0);
+        $handshake = "GET /ws HTTP/1.1\r\nHost: example.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+        $codec = new FrameCodec();
+        $a = new ServerScriptedSocket('a', '127.0.0.1:10001', [
+            new SocketReadResult(SocketReadStatus::DATA, $handshake),
+            new SocketReadResult(SocketReadStatus::DATA, $codec->encode(new Frame(Opcode::TEXT, 'relay'), true, 'mask')),
+        ]);
+        $b = new ServerScriptedSocket('b', '127.0.0.1:10002', [
+            new SocketReadResult(SocketReadStatus::DATA, $handshake),
+        ]);
+        $listener = new ServerQueueListener('listener', $a, $b);
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server(
+            $options,
+            new ServerBackpressureListenerFactory($listener),
+            $loop,
+            new Handshake($options),
+            new ConnectionFactory($codec, $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock),
+            serverTestApplicationInvoker(),
+            serverTestErrorFactory(),
+            $clock,
+        );
+        $application = new class implements WebSocketApplicationInterface {
+            public array $connections = [];
+            public array $errors = [];
+            public function connected(ConnectionInterface $connection): void
+            {
+                $this->connections[$connection->remoteAddress] = $connection;
+            }
+            public function received(ConnectionInterface $connection, Message $message): void
+            {
+                $this->connections['127.0.0.1:10002']->sendText($message->payload);
+            }
+            public function disconnected(ConnectionInterface $connection, CloseInfo $close): void {}
+            public function failed(WebSocketErrorContextInterface $context): void
+            {
+                $this->errors[] = $context;
+            }
+        };
+        $loop->delay(100, fn () => $server->stop());
+
+        $server->run($application);
+
+        $bytes = substr($b->written, strpos($b->written, "\r\n\r\n") + 4);
+        $frame = $codec->decode($bytes, expectMasked: false);
+        expect($application->errors)->toBe([])
+            ->and($application->connections['127.0.0.1:10002'])->not->toBeInstanceOf(Componenta\WebSocket\Connection\TransportConnectionInterface::class)
+            ->and($frame?->opcode)->toBe(Opcode::TEXT)
+            ->and($frame?->payload)->toBe('relay');
+    });
 });

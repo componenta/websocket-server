@@ -255,4 +255,41 @@ describe('WebSocket connection contract', function () {
 
         $connection->socket->close();
     });
+
+    it('notifies the transport only when an empty queue becomes writable', function () {
+        $connection = contractTestConnection();
+        $notifications = 0;
+        $connection->setWriteNotifier(function () use (&$notifications): void {
+            $notifications++;
+        });
+
+        $connection->application->sendText('one');
+        $connection->application->sendText('two');
+        expect($notifications)->toBe(1);
+
+        $connection->flush();
+        $connection->application->sendText('three');
+        expect($notifications)->toBe(2);
+
+        $connection->markClosed();
+        expect($connection->application->sendText('late')->accepted)->toBeFalse()
+            ->and($notifications)->toBe(2)
+            ->and($connection->queuedBytes)->toBe(0);
+        $connection->socket->close();
+    });
+
+    it('exposes a stable application handle without transport capabilities', function () {
+        $connection = contractTestConnection();
+        $handle = $connection->application;
+        $context = $handle->context->with('user', 42);
+        $handle->context = $context;
+
+        expect($handle)->toBe($connection->application)
+            ->and($handle)->not->toBeInstanceOf(Componenta\WebSocket\Connection\TransportConnectionInterface::class)
+            ->and(method_exists($handle, 'markClosed'))->toBeFalse()
+            ->and(property_exists($handle, 'socket'))->toBeFalse()
+            ->and($handle->id)->toBe('contract')
+            ->and($connection->context->get('user'))->toBe(42);
+        $connection->socket->close();
+    });
 });

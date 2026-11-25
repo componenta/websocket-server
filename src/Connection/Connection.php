@@ -21,6 +21,12 @@ final class Connection implements TransportConnectionInterface
     private string $buffer = '';
     private string $outgoingBuffer = '';
     private int $outgoingOffset = 0;
+    private ?\Closure $writeNotifier = null;
+    private ?ConnectionInterface $applicationHandle = null;
+
+    public ConnectionInterface $application {
+        get => $this->applicationHandle ??= new ApplicationConnection($this);
+    }
     private(set) ConnectionState $state = ConnectionState::OPEN;
     private(set) ?CloseInfo $closeInfo = null;
     private(set) int $receivedPongs = 0;
@@ -144,10 +150,23 @@ final class Connection implements TransportConnectionInterface
         return true;
     }
 
+    public function setWriteNotifier(?\Closure $notifier): void
+    {
+        $this->writeNotifier = $notifier;
+
+        if ($notifier !== null && $this->needsWrite) {
+            $notifier();
+        }
+    }
+
     public function markClosed(?CloseInfo $close = null): void
     {
         $this->state = ConnectionState::CLOSED;
         $this->closeInfo ??= $close ?? CloseInfo::transport('Connection closed.');
+        $this->writeNotifier = null;
+        $this->buffer = '';
+        $this->resetOutgoingBuffer();
+        $this->assembler->reset();
     }
 
     private function handleFrame(Frame $frame): ?Message
@@ -220,6 +239,9 @@ final class Connection implements TransportConnectionInterface
         if (!$this->needsWrite) {
             $this->outgoingBuffer = $encoded;
             $this->outgoingOffset = 0;
+            if ($this->writeNotifier !== null) {
+                ($this->writeNotifier)();
+            }
 
             return SendResult::accepted($queuedBytes);
         }

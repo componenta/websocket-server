@@ -738,7 +738,12 @@ final class Server implements WebSocketServerInterface
                 );
             },
         );
-        $this->applications->connected($application, $accepted);
+        $accepted->setWriteNotifier(function () use ($accepted, &$connections, &$readWatchers, &$writeWatchers, $application): void {
+            if ($this->running && isset($connections[$accepted->socket->id])) {
+                $this->ensureWriteWatcher($accepted, $connections, $readWatchers, $writeWatchers, $application);
+            }
+        });
+        $this->applications->connected($application, $accepted->application);
         $this->flushOrWatchConnection($accepted, $connections, $readWatchers, $writeWatchers, $application);
     }
 
@@ -842,7 +847,7 @@ final class Server implements WebSocketServerInterface
         }
 
         foreach ($messages as $message) {
-            $this->applications->received($application, $connection, $message);
+            $this->applications->received($application, $connection->application, $message);
 
             if (!$this->running) {
                 break;
@@ -1136,7 +1141,7 @@ final class Server implements WebSocketServerInterface
 
         $connection->markClosed($close);
         $connection->socket->close();
-        $this->applications->disconnected($application, $connection, $connection->closeInfo ?? $close);
+        $this->applications->disconnected($application, $connection->application, $connection->closeInfo ?? $close);
     }
 
     /**
@@ -1181,7 +1186,8 @@ final class Server implements WebSocketServerInterface
         ?ConnectionInterface $connection,
         \Throwable $error,
     ): void {
-        $this->applications->failed($application, $this->errors->create($phase, $connection, $error));
+        $handle = $connection instanceof TransportConnectionInterface ? $connection->application : $connection;
+        $this->applications->failed($application, $this->errors->create($phase, $handle, $error));
     }
 
     private function writeImmediate(SocketInterface $socket, string $data): bool
