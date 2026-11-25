@@ -546,6 +546,9 @@ final class Server implements WebSocketServerInterface
     private function shutdown(ServerRunState $state, SocketListenerInterface $listener): void
     {
         $this->cancelWatchers($state, $state->watchers);
+        // Release the listening endpoint before draining clients. Otherwise
+        // the kernel can still accept TCP handshakes into the unused backlog.
+        $this->closeSocket($state, $listener);
         foreach ($state->pending() as $session) {
             $this->discardPending($state, $session);
         }
@@ -565,7 +568,6 @@ final class Server implements WebSocketServerInterface
             foreach ($state->active() as $session) {
                 $this->closeConnection($state, $session, $session->shutdownCloseInfo());
             }
-            $this->closeSocket($state, $listener);
         }
     }
 

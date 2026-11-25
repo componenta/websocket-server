@@ -13,5 +13,7 @@ final class CloseCode
     public const int ABNORMAL = 1006;
     public const int INVALID_PAYLOAD_DATA = 1007;
     public const int PAYLOAD_TOO_LARGE = 1009;
+    /** Only clients may send this code (RFC 6455, section 7.4.1). */
+    public const int MANDATORY_EXTENSION = 1010;
     public const int INTERNAL_ERROR = 1011;
 }

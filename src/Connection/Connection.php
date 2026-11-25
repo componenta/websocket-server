@@ -327,7 +327,10 @@ final class Connection implements TransportConnectionInterface
         $this->closeInfo ??= $peerClose;
 
         if ($this->state === ConnectionState::OPEN) {
-            $result = $this->queue(new Frame(Opcode::CLOSE, $frame->payload), notify: false);
+            // An acknowledgement does not have to echo the peer's status.
+            // Code 1010 is client-only, so acknowledge it without a status.
+            $payload = $peerClose->code === CloseCode::MANDATORY_EXTENSION ? '' : $frame->payload;
+            $result = $this->queue(new Frame(Opcode::CLOSE, $payload), notify: false);
 
             if (!$result->accepted) {
                 $this->closeInfo = CloseInfo::transport('Unable to queue WebSocket close frame.');
@@ -428,7 +431,7 @@ final class Connection implements TransportConnectionInterface
 
     private function createClosePayload(int $code, string $reason): string
     {
-        if (!$this->isValidCloseCode($code)) {
+        if ($code === CloseCode::MANDATORY_EXTENSION || !$this->isValidCloseCode($code)) {
             throw new \InvalidArgumentException('WebSocket close code is invalid.');
         }
 

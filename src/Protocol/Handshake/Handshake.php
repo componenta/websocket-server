@@ -121,7 +121,7 @@ final readonly class Handshake implements HandshakeInterface
         }
 
         $host = $headers['host'] ?? '';
-        if (!preg_match('/^(?:\[[0-9a-f:.]+\]|[a-z0-9._~!$&\'()*+;=%-]+)(?::[0-9]+)?\z/i', $host)) {
+        if (!$this->isValidAuthority($host)) {
             return null;
         }
 
@@ -133,18 +133,43 @@ final readonly class Handshake implements HandshakeInterface
         if (str_starts_with($target, '/')) {
             $path = explode('?', $target, 2)[0];
         } else {
-            $parts = parse_url($target);
-            if ($parts === false
-                || !in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true)
-                || !isset($parts['host'])
-                || isset($parts['user'])
+            if (preg_match('~\Ahttps?://([^/?#]+)~i', $target, $authority) !== 1
+                || !$this->isValidAuthority($authority[1])
             ) {
                 return null;
             }
+            $parts = parse_url($target);
+            if ($parts === false || !isset($parts['host']) || isset($parts['user'])) {
+                return null;
+            }
+            // RFC 9112 section 3.2.2: the request-target is authoritative
+            // for an absolute-form request. Do not expose the conflicting Host
+            // to application routing or authorization.
+            $headers['host'] = $authority[1];
             $path = $parts['path'] ?? '/';
         }
 
         return new HandshakeRequest($matches['method'], $target, $path, $headers);
+    }
+
+    private function isValidAuthority(string $authority): bool
+    {
+        if ($authority === '') {
+            return false;
+        }
+
+        // URI reg-name: require complete percent escapes. A raw comma is
+        // deliberately excluded to reject ambiguous combined Host fields.
+        if ($authority[0] !== '[') {
+            return preg_match('/\A(?:[a-z0-9._~!$&\'()*+;=-]|%[0-9a-f]{2})+(?::[0-9]+)?\z/i', $authority) === 1;
+        }
+
+        if (preg_match('/\A\[([^\]]+)\](?::[0-9]+)?\z/', $authority, $match) !== 1) {
+            return false;
+        }
+
+        return filter_var($match[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false
+            || preg_match('/\Av[0-9a-f]+\.[a-z0-9._~!$&\'()*+,;=:-]+\z/i', $match[1]) === 1;
     }
 
     /**
