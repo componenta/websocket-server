@@ -632,4 +632,46 @@ describe('WebSocket connection contract', function () {
         }
     });
 
+
+    it('does not send the client-only extension close status from the server', function () {
+        $socket = new ConnectionPartialWriteSocket('client-only');
+        $codec = new FrameCodec();
+        $connection = new Connection($socket, $codec, new MessageAssembler(1024), 1024, 'client-only',
+            new HandshakeRequest('GET', '/ws', '/ws', []));
+
+        try {
+            expect(fn () => $connection->close(1010, 'extension required'))->toThrow(InvalidArgumentException::class);
+            expect($connection->state)->toBe(ConnectionState::OPEN)
+                ->and($connection->queuedBytes)->toBe(0);
+            expect($connection->close()->accepted)->toBeTrue();
+            expect($connection->flush())->toBeTrue()
+                ->and($socket->written)->toBe("\x88\x02\x03\xe8");
+        } finally {
+            $connection->markClosed();
+        }
+    });
+
+    it('acknowledges a client extension close without echoing its client-only status', function () {
+        $socket = new ConnectionPartialWriteSocket('client-extension');
+        $codec = new FrameCodec();
+        $connection = new Connection($socket, $codec, new MessageAssembler(1024), 1024, 'client-extension',
+            new HandshakeRequest('GET', '/ws', '/ws', []));
+
+        try {
+            $payload = pack('n', 1010) . 'extension required';
+            expect(ReceivedMessages::collect($connection, $codec->encode(new Frame(Opcode::CLOSE, $payload), true, 'mask')))->toBe([])
+                ->and($connection->closing)->toBeTrue()
+                ->and($connection->closeInfo?->code)->toBe(1010)
+                ->and($connection->closeInfo?->reason)->toBe('extension required')
+                ->and($connection->closeInfo?->initiator)->toBe(CloseInitiator::REMOTE);
+            expect($connection->flush())->toBeTrue()
+                ->and($socket->written)->toBe("\x88\x00")
+                ->and($connection->readyToClose)->toBeTrue();
+            $connection->markClosed();
+            expect($connection->closeInfo?->clean)->toBeTrue();
+        } finally {
+            $connection->markClosed();
+        }
+    });
+
 });

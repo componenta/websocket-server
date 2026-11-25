@@ -177,4 +177,43 @@ describe('WebSocket handshake', function () {
             ->and($response->request?->header('X-Empty'))->toBe('');
     });
 
+
+    it('uses the authority of an absolute request target rather than the supplied host', function () {
+        $request = str_replace('GET /ws ', 'GET http://actual.example:8080/ws?x=1 ', webSocketHandshakeRequest());
+        $response = (new Handshake(new WebSocketOptions()))->accept($request);
+
+        expect($response->accepted)->toBeTrue()
+            ->and($response->request?->path)->toBe('/ws')
+            ->and($response->request?->target)->toBe('http://actual.example:8080/ws?x=1')
+            ->and($response->request?->header('Host'))->toBe('actual.example:8080');
+    });
+
+    it('rejects invalid HTTP host literals and incomplete percent escapes', function (string $host) {
+        $response = (new Handshake(new WebSocketOptions()))->accept(
+            webSocketHandshakeRequest(headers: [Header::HOST => $host]),
+        );
+
+        expect($response->accepted)->toBeFalse()
+            ->and($response->status)->toBe(400);
+    })->with([
+        '[:::]',
+        '[1:2:3]',
+        '[abcd]',
+        'invalid%zz.example',
+        'invalid%.example',
+    ]);
+
+    it('accepts valid HTTP IPv6 host literals and percent-encoded reg-names', function (string $host) {
+        $response = (new Handshake(new WebSocketOptions()))->accept(
+            webSocketHandshakeRequest(headers: [Header::HOST => $host]),
+        );
+
+        expect($response->accepted)->toBeTrue()
+            ->and($response->request?->header('Host'))->toBe($host);
+    })->with([
+        '[::1]:8080',
+        '[::ffff:192.0.2.1]',
+        'example%2Etest',
+    ]);
+
 });

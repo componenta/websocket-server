@@ -1424,4 +1424,75 @@ describe('WebSocket server', function () {
             ->and($b->closed)->toBeTrue();
     });
 
+
+    it('closes the listener before draining established connections during shutdown', function () {
+        $clock = new ServerBackpressureClock(stepMs: 1);
+        $options = new WebSocketOptions(heartbeatIntervalMs: 0, selectTimeoutUsec: 0, shutdownDrainTimeoutMs: 100);
+        $socket = new class implements SocketInterface {
+            public string $id = 'shutdown-client';
+            public string $remoteAddress = 'local';
+            public bool $eof { get => false; }
+            public ?ServerQueueListener $listener = null;
+            public bool $closed = false;
+            public ?bool $listenerClosedDuringWrite = null;
+            private bool $handshakeRead = false;
+            private bool $acknowledged = false;
+            public function read(int $maxBytes): SocketReadResult
+            {
+                if (!$this->handshakeRead) {
+                    $this->handshakeRead = true;
+                    return new SocketReadResult(SocketReadStatus::DATA, serverTestHandshake());
+                }
+                if (!$this->acknowledged && $this->listenerClosedDuringWrite !== null) {
+                    $this->acknowledged = true;
+                    return new SocketReadResult(SocketReadStatus::DATA, serverTestClientFrame(Opcode::CLOSE, pack('n', 1001)));
+                }
+                return new SocketReadResult(SocketReadStatus::EMPTY);
+            }
+            public function write(string $bytes): SocketWriteResult
+            {
+                if (!str_starts_with($bytes, 'HTTP/1.1 ')) {
+                    $this->listenerClosedDuringWrite = $this->listener?->closed;
+                }
+                return new SocketWriteResult(SocketWriteStatus::WRITTEN, strlen($bytes));
+            }
+            public function close(): void
+            {
+                $this->closed = true;
+            }
+        };
+        $listener = new ServerQueueListener('listener', $socket);
+        $socket->listener = $listener;
+        $loop = new SelectEventLoop(new ServerQueueSelector(), $clock, 0);
+        $server = new Server($options, new ServerBackpressureListenerFactory($listener), $loop,
+            new Handshake($options), new ConnectionFactory(new FrameCodec(), $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock);
+        $application = new class($server) implements WebSocketApplicationInterface {
+            public ?CloseInfo $close = null;
+            public array $errors = [];
+            public function __construct(private readonly WebSocketServerInterface $server) {}
+            public function connected(ConnectionInterface $connection): void
+            {
+                $this->server->stop();
+            }
+            public function received(ConnectionInterface $connection, Message $message): void {}
+            public function disconnected(ConnectionInterface $connection, CloseInfo $close): void
+            {
+                $this->close = $close;
+            }
+            public function failed(WebSocketErrorContextInterface $context): void
+            {
+                $this->errors[] = $context;
+            }
+        };
+
+        $server->run($application);
+
+        expect($socket->listenerClosedDuringWrite)->toBeTrue()
+            ->and($application->errors)->toBe([])
+            ->and($application->close?->clean)->toBeTrue()
+            ->and($listener->closed)->toBeTrue()
+            ->and($socket->closed)->toBeTrue();
+    });
+
 });
