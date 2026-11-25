@@ -1097,4 +1097,38 @@ describe('WebSocket server', function () {
             ->and($application->errors[0]->phase)->toBe(WebSocketErrorPhase::APPLICATION)
             ->and($socket->closed)->toBeTrue();
     });
+
+    it('continues shutdown drain after a temporary blocked write', function () {
+        $clock = new ServerBackpressureClock();
+        $options = new WebSocketOptions(shutdownDrainTimeoutMs: 50, heartbeatIntervalMs: 0, selectTimeoutUsec: 0);
+        $handshake = "GET /ws HTTP/1.1\r\nHost: example.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+        $codec = new FrameCodec();
+        $socket = new ServerScriptedSocket('client', '127.0.0.1:10001', [
+            new SocketReadResult(SocketReadStatus::DATA, $handshake),
+            new SocketReadResult(SocketReadStatus::EMPTY),
+            new SocketReadResult(SocketReadStatus::DATA, $codec->encode(new Frame(Opcode::CLOSE, pack('n', 1001)), true, 'mask')),
+        ], [
+            new SocketWriteResult(SocketWriteStatus::WRITTEN),
+            new SocketWriteResult(SocketWriteStatus::BLOCKED),
+            new SocketWriteResult(SocketWriteStatus::WRITTEN),
+        ]);
+        $listener = new ServerBackpressureListener('listener', $socket);
+        $server = new Server(
+            $options, new ServerBackpressureListenerFactory($listener),
+            new SelectEventLoop(new ServerBackpressureSelector(), $clock, 0),
+            new Handshake($options), new ConnectionFactory($codec, $options, new MessageAssemblerFactory()),
+            new PendingConnectionFactory($clock), serverTestApplicationInvoker(), serverTestErrorFactory(), $clock,
+        );
+        $application = new ServerBackpressureApplication();
+        $application->server = $server;
+
+        $server->run($application);
+
+        $bytes = substr($socket->written, strpos($socket->written, "\r\n\r\n") + 4);
+        $frame = $codec->decode($bytes, expectMasked: false);
+        expect($frame?->opcode)->toBe(Opcode::CLOSE)
+            ->and($application->lastClose?->clean)->toBeTrue()
+            ->and($socket->closed)->toBeTrue()
+            ->and($application->errors)->toBe([]);
+    });
 });

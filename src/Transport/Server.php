@@ -114,24 +114,36 @@ final class Server implements WebSocketServerInterface
             $this->fail($application, WebSocketErrorPhase::SELECT, null, $e);
         } finally {
             $this->running = false;
-            $listenerWatcher?->cancel();
-            $cleanupTimer?->cancel();
-            $lifecycleTimer?->cancel();
-            $this->cancelWatchers($pendingWatchers);
-            $this->cancelWatchers($pendingWriteWatchers);
-            $this->cancelWatchers($readWatchers);
-            $this->cancelWatchers($writeWatchers);
+            foreach ([$listenerWatcher, $cleanupTimer, $lifecycleTimer] as $watcher) {
+                try {
+                    $watcher?->cancel();
+                } catch (\Throwable $error) {
+                    $this->reportCleanupFailure($application, null, $error);
+                }
+            }
+            $this->cancelWatchers($pendingWatchers, $application);
+            $this->cancelWatchers($pendingWriteWatchers, $application);
+            $this->cancelWatchers($readWatchers, $application);
+            $this->cancelWatchers($writeWatchers, $application);
 
             $this->drainConnectionsForShutdown($connections, $readWatchers, $writeWatchers, $application);
 
             foreach ($pending as $connection) {
-                $connection->socket->close();
+                try {
+                    $connection->socket->close();
+                } catch (\Throwable $error) {
+                    $this->reportCleanupFailure($application, null, $error);
+                }
             }
 
             $this->lastActivityAt = [];
             $this->awaitingPongSince = [];
             $this->queuedPingSince = [];
-            $listener->close();
+            try {
+                $listener->close();
+            } catch (\Throwable $error) {
+                $this->reportCleanupFailure($application, null, $error);
+            }
         }
     }
 
@@ -1117,62 +1129,84 @@ final class Server implements WebSocketServerInterface
         array &$writeWatchers,
         WebSocketApplicationInterface $application,
     ): void {
+        $deadline = hrtime(true) / 1_000_000 + $this->options->shutdownDrainTimeoutMs;
+
         foreach ($connections as $connection) {
-            if (!$connection->closing && !$connection->closed) {
-                $connection->close(CloseCode::GOING_AWAY, 'Server shutdown');
+            try {
+                $connection->setWriteNotifier(null);
+                if (!$connection->closing && !$connection->closed
+                    && !$connection->close(CloseCode::GOING_AWAY, 'Server shutdown')->accepted
+                ) {
+                    $this->closeConnection(
+                        $connection, $connections, $readWatchers, $writeWatchers, $application,
+                        CloseInfo::transport('Unable to queue shutdown close frame.'),
+                    );
+                }
+            } catch (\Throwable $error) {
+                $this->reportCleanupFailure($application, $connection, $error);
+                $this->closeConnection(
+                    $connection, $connections, $readWatchers, $writeWatchers, $application,
+                    CloseInfo::transport('Unable to begin shutdown close.'),
+                );
             }
         }
 
-        $attempts = $this->options->shutdownDrainTimeoutMs === 0
-            ? 0
-            : min(64, max(1, $this->options->shutdownDrainTimeoutMs));
-
-        for ($attempt = 0; $attempt < $attempts && $connections !== []; $attempt++) {
+        while ($connections !== [] && hrtime(true) / 1_000_000 < $deadline) {
             $progress = false;
 
             foreach ($connections as $connection) {
-                $queuedBefore = $connection->queuedBytes;
-
-                if ($queuedBefore > 0 && !$connection->flush()) {
-                    $this->closeConnection(
-                        $connection,
-                        $connections,
-                        $readWatchers,
-                        $writeWatchers,
-                        $application,
-                        CloseInfo::transport('Unable to write shutdown close frame.'),
-                    );
-                    continue;
+                if (hrtime(true) / 1_000_000 >= $deadline) {
+                    break;
                 }
 
-                if ($connection->queuedBytes < $queuedBefore) {
-                    $progress = true;
-                }
+                try {
+                    $queuedBefore = $connection->queuedBytes;
+                    if ($connection->needsWrite && !$connection->flush()) {
+                        throw new \RuntimeException('Unable to write shutdown close frame.');
+                    }
 
-                if ($connection->closing && !$connection->needsWrite) {
+                    $progress = $progress || $connection->queuedBytes < $queuedBefore;
+
+                    if (!$connection->readyToClose) {
+                        $read = $connection->socket->read(8192);
+                        if ($read->status === SocketReadStatus::DATA) {
+                            $connection->appendBytes($read->bytes);
+                            $progress = true;
+                        } elseif ($read->status === SocketReadStatus::CLOSED || $read->status === SocketReadStatus::ERROR) {
+                            $this->closeConnection(
+                                $connection, $connections, $readWatchers, $writeWatchers, $application,
+                                CloseInfo::transport($read->reason ?? 'Socket closed during shutdown.'),
+                            );
+                            continue;
+                        }
+                    }
+
+                    if ($connection->readyToClose) {
+                        $this->closeConnection(
+                            $connection, $connections, $readWatchers, $writeWatchers, $application,
+                            $connection->closeInfo ?? CloseInfo::serverShutdown(),
+                        );
+                    }
+                } catch (\Throwable $error) {
+                    $this->reportCleanupFailure($application, $connection, $error);
                     $this->closeConnection(
-                        $connection,
-                        $connections,
-                        $readWatchers,
-                        $writeWatchers,
-                        $application,
-                        $connection->closeInfo ?? CloseInfo::serverShutdown(),
+                        $connection, $connections, $readWatchers, $writeWatchers, $application,
+                        CloseInfo::transport('WebSocket shutdown I/O failed.'),
                     );
                 }
             }
 
-            if (!$progress) {
-                break;
+            if (!$progress && $connections !== []) {
+                $remainingUsec = (int) (($deadline - hrtime(true) / 1_000_000) * 1000);
+                if ($remainingUsec > 0) {
+                    usleep(min(1000, $remainingUsec));
+                }
             }
         }
 
         foreach ($connections as $connection) {
             $this->closeConnection(
-                $connection,
-                $connections,
-                $readWatchers,
-                $writeWatchers,
-                $application,
+                $connection, $connections, $readWatchers, $writeWatchers, $application,
                 $connection->closeInfo ?? CloseInfo::serverShutdown(),
             );
         }
@@ -1191,21 +1225,43 @@ final class Server implements WebSocketServerInterface
         WebSocketApplicationInterface $application,
         CloseInfo $close,
     ): void {
-        if ($connection->closed) {
+        $id = $connection->socket->id;
+        if (($connections[$id] ?? null) !== $connection) {
             return;
         }
 
-        $id = $connection->socket->id;
-        ($this->closeTimers[$id] ?? null)?->cancel();
-        unset($this->closeTimers[$id]);
-        ($readWatchers[$id] ?? null)?->cancel();
-        ($writeWatchers[$id] ?? null)?->cancel();
-        unset($readWatchers[$id], $writeWatchers[$id], $connections[$id]);
+        $timer = $this->closeTimers[$id] ?? null;
+        $reader = $readWatchers[$id] ?? null;
+        $writer = $writeWatchers[$id] ?? null;
+        unset($this->closeTimers[$id], $readWatchers[$id], $writeWatchers[$id], $connections[$id]);
         unset($this->lastActivityAt[$id], $this->awaitingPongSince[$id], $this->queuedPingSince[$id]);
 
-        $connection->markClosed($close);
-        $connection->socket->close();
-        $this->applications->disconnected($application, $connection->application, $connection->closeInfo ?? $close);
+        foreach ([$timer, $reader, $writer] as $watcher) {
+            try {
+                $watcher?->cancel();
+            } catch (\Throwable $error) {
+                $this->reportCleanupFailure($application, $connection, $error);
+            }
+        }
+
+        try {
+            $connection->setWriteNotifier(null);
+            $connection->markClosed($close);
+        } catch (\Throwable $error) {
+            $this->reportCleanupFailure($application, $connection, $error);
+        }
+
+        try {
+            $connection->socket->close();
+        } catch (\Throwable $error) {
+            $this->reportCleanupFailure($application, $connection, $error);
+        }
+
+        try {
+            $this->applications->disconnected($application, $connection->application, $connection->closeInfo ?? $close);
+        } catch (\Throwable $error) {
+            $this->reportCleanupFailure($application, $connection, $error);
+        }
     }
 
     /**
@@ -1235,13 +1291,17 @@ final class Server implements WebSocketServerInterface
     /**
      * @param array<int|string, LoopWatcherInterface> $watchers
      */
-    private function cancelWatchers(array &$watchers): void
+    private function cancelWatchers(array &$watchers, WebSocketApplicationInterface $application): void
     {
-        foreach ($watchers as $watcher) {
-            $watcher->cancel();
-        }
-
+        $pending = $watchers;
         $watchers = [];
+        foreach ($pending as $watcher) {
+            try {
+                $watcher->cancel();
+            } catch (\Throwable $error) {
+                $this->reportCleanupFailure($application, null, $error);
+            }
+        }
     }
 
     private function fail(
@@ -1252,6 +1312,18 @@ final class Server implements WebSocketServerInterface
     ): void {
         $handle = $connection instanceof TransportConnectionInterface ? $connection->application : $connection;
         $this->applications->failed($application, $this->errors->create($phase, $handle, $error));
+    }
+
+    private function reportCleanupFailure(
+        WebSocketApplicationInterface $application,
+        ?ConnectionInterface $connection,
+        \Throwable $error,
+    ): void {
+        try {
+            $this->fail($application, WebSocketErrorPhase::SHUTDOWN, $connection, $error);
+        } catch (\Throwable) {
+            // A failing error reporter must not prevent releasing other resources.
+        }
     }
 
     private function writeImmediate(SocketInterface $socket, string $data): bool
