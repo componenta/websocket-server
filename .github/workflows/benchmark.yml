@@ -51,6 +51,7 @@ jobs:
           php -r 'require "benchmarks/bootstrap.php"; echo (new ReflectionClass(Componenta\WebSocket\Protocol\FrameCodec::class))->getFileName(), PHP_EOL;'
           vendor/bin/phpbench run --group=comparative --tag=head --ref=baseline --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/comparison.txt"
           vendor/bin/phpbench run --group=runtime --tag=runtime --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/runtime.txt"
+          vendor/bin/phpbench run --group=network --tag=network --report=aggregate --no-ansi | tee "$RUNNER_TEMP/performance/network.txt"
           cp -r .phpbench/storage "$RUNNER_TEMP/performance/storage"
       - uses: actions/upload-artifact@v4
         if: always()
