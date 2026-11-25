@@ -363,4 +363,60 @@ describe('WebSocket event loop', function () {
         }
     });
 
+
+    it('prevents copying live registrations and the loop that owns them', function () {
+        $loop = new SelectEventLoop(new EventLoopTestSelector(), new EventLoopTestClock(), 0);
+        $calls = [];
+        $timer = $loop->delay(1, static function () use (&$calls): void {
+            $calls[] = 'timer';
+        });
+        $watcher = $loop->onReadable(new EventLoopTestSocket('read'), static function () use ($loop, &$calls): void {
+            $calls[] = 'read';
+            $loop->stop();
+        });
+
+        try {
+            expect(fn () => clone $timer)->toThrow(Error::class)
+                ->and(fn () => clone $watcher)->toThrow(Error::class)
+                ->and(fn () => clone $loop)->toThrow(Error::class);
+            $loop->run();
+
+            expect($calls)->toBe(['timer', 'read'])
+                ->and($timer->enabled)->toBeFalse()
+                ->and($watcher->enabled)->toBeTrue();
+        } finally {
+            $timer->cancel();
+            $watcher->cancel();
+        }
+    });
+
+    it('caps a far future timer wait before converting milliseconds to integer microseconds', function () {
+        $clock = new class implements MonotonicClockInterface {
+            public function nowMilliseconds(): float { return 0.0; }
+        };
+        $selector = new class implements SocketSelectorInterface {
+            public array $timeouts = [];
+            public function assertSelectable(SocketInterface|SocketListenerInterface $target): void {}
+            public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection
+            {
+                $this->timeouts[] = $timeoutUsec;
+                return new SocketSelection([], is_array($read) ? $read : iterator_to_array($read), []);
+            }
+        };
+        $loop = new SelectEventLoop($selector, $clock, 200_000);
+        $timer = $loop->delay(PHP_INT_MAX, static function (): void {
+            throw new RuntimeException('Future timer fired early.');
+        });
+        $watcher = $loop->onReadable(new EventLoopTestSocket('ready'), static fn () => $loop->stop());
+
+        try {
+            $loop->run();
+            expect($selector->timeouts)->toBe([200_000])
+                ->and($timer->enabled)->toBeTrue();
+        } finally {
+            $timer->cancel();
+            $watcher->cancel();
+        }
+    });
+
 });
