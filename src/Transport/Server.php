@@ -527,7 +527,7 @@ final class Server implements WebSocketServerInterface
             $this->cleanupFailure($state, null, $error);
         } finally {
             foreach ($state->active() as $session) {
-                $this->closeConnection($state, $session, $session->connection->closeInfo ?? CloseInfo::serverShutdown());
+                $this->closeConnection($state, $session, $session->shutdownCloseInfo());
             }
             $this->closeSocket($state, $listener);
         }

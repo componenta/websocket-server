@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Componenta\WebSocket\Transport;
 
 use Componenta\WebSocket\Connection\TransportConnectionInterface;
+use Componenta\WebSocket\Protocol\CloseCode;
 use Componenta\WebSocket\Protocol\CloseInfo;
 
 /** @internal Owns connection-specific runtime registrations and heartbeat state. */
@@ -14,12 +15,30 @@ final class ActiveSession
     public private(set) bool $announced = false;
     private ?float $queuedPingAt = null;
     private ?float $sentPingAt = null;
+    private bool $shutdownInitiated = false;
 
     public function __construct(
         public readonly TransportConnectionInterface $connection,
         public private(set) float $lastActivityAt,
     ) {
         $this->watchers = new SessionWatchers();
+    }
+
+    public function beginShutdown(): bool
+    {
+        if ($this->connection->closing || $this->connection->closed) {
+            return true;
+        }
+
+        $this->shutdownInitiated = $this->connection->close(CloseCode::GOING_AWAY, 'Server shutdown')->accepted;
+        return $this->shutdownInitiated;
+    }
+
+    public function shutdownCloseInfo(): CloseInfo
+    {
+        return $this->shutdownInitiated
+            ? CloseInfo::serverShutdown()
+            : ($this->connection->closeInfo ?? CloseInfo::serverShutdown());
     }
 
     public function announce(): void

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Componenta\WebSocket\Transport;
 
 use Componenta\WebSocket\Loop\MonotonicClockInterface;
-use Componenta\WebSocket\Protocol\CloseCode;
 use Componenta\WebSocket\Protocol\CloseInfo;
 use Componenta\WebSocket\Socket\SocketReadStatus;
 
@@ -26,9 +25,7 @@ final readonly class ShutdownCoordinator
             $connection = $session->connection;
             try {
                 $connection->setWriteNotifier(null);
-                if (!$connection->closing && !$connection->closed
-                    && !$connection->close(CloseCode::GOING_AWAY, 'Server shutdown')->accepted
-                ) {
+                if (!$session->beginShutdown()) {
                     $close($session, CloseInfo::transport('Unable to queue shutdown close frame.'));
                 }
             } catch (\Throwable $error) {
@@ -64,7 +61,7 @@ final readonly class ShutdownCoordinator
                     }
 
                     if ($connection->readyToClose) {
-                        $close($session, $connection->closeInfo ?? CloseInfo::serverShutdown());
+                        $close($session, $session->shutdownCloseInfo());
                     }
                 } catch (\Throwable $error) {
                     $report($session, $error);
@@ -81,7 +78,7 @@ final readonly class ShutdownCoordinator
         }
 
         foreach ($state->active() as $session) {
-            $close($session, $session->connection->closeInfo ?? CloseInfo::serverShutdown());
+            $close($session, $session->shutdownCloseInfo());
         }
     }
 }
