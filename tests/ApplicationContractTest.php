@@ -100,4 +100,71 @@ describe('WebSocket application contracts', function () {
         }
     });
 
+
+    it('resolves existing applications, service identifiers, routers and callable handlers', function () {
+        $registry = new InMemoryConnectionRegistry();
+        $factory = new Componenta\WebSocket\Application\WebSocketApplicationFactory($registry);
+        $router = new RecordingMessageRouter();
+        $existing = $factory->fromRouter($router);
+        $container = new class(['application' => $existing, 'router' => $router]) implements Psr\Container\ContainerInterface {
+            public function __construct(private readonly array $services) {}
+            public function has(string $id): bool { return array_key_exists($id, $this->services); }
+            public function get(string $id): mixed { return $this->services[$id]; }
+        };
+        $resolver = new Componenta\WebSocket\Application\WebSocketApplicationResolver($container, $factory);
+
+        expect($resolver->resolve($existing))->toBe($existing)
+            ->and($resolver->resolve('application'))->toBe($existing)
+            ->and(fn () => $resolver->resolve('missing-service'))->toThrow(InvalidArgumentException::class)
+            ->and(fn () => $resolver->resolve(42))->toThrow(InvalidArgumentException::class);
+
+        $calls = [];
+        $applications = [
+            $resolver->resolve($router),
+            $resolver->resolve('router'),
+            $resolver->resolve(static function (ConnectionInterface $connection, Message $message) use (&$calls): void {
+                $calls[] = [$connection->id, $message->payload];
+            }),
+        ];
+
+        $transport = webSocketTestConnection('resolved');
+        $connection = $transport->application;
+        try {
+            foreach ($applications as $application) {
+                $application->connected($connection);
+                expect($registry->get('resolved'))->toBe($connection)
+                    ->and($registry->toArray())->toBe(['resolved' => $connection]);
+                $application->received($connection, new Message(Opcode::TEXT, 'hello'));
+                $application->disconnected($connection, CloseInfo::remote());
+                expect($registry->count())->toBe(0);
+            }
+            expect($router->messages)->toBe([
+                ['connection' => 'resolved', 'payload' => 'hello'],
+                ['connection' => 'resolved', 'payload' => 'hello'],
+            ])->and($calls)->toBe([['resolved', 'hello']]);
+        } finally {
+            $transport->markClosed();
+            $transport->socket->close();
+        }
+    });
+
+    it('removes registry entries by id without exposing a mutable registry array', function () {
+        $registry = new InMemoryConnectionRegistry();
+        $transport = webSocketTestConnection('registry');
+        try {
+            $registry->add($transport->application);
+            $snapshot = $registry->toArray();
+            unset($snapshot['registry']);
+            expect($registry->count())->toBe(1)
+                ->and($registry->get('registry'))->toBe($transport->application);
+            $registry->remove('registry');
+            $registry->remove('missing');
+            expect($registry->count())->toBe(0)
+                ->and($registry->get('registry'))->toBeNull();
+        } finally {
+            $transport->markClosed();
+            $transport->socket->close();
+        }
+    });
+
 });
