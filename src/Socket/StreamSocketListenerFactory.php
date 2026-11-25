@@ -15,7 +15,11 @@ final readonly class StreamSocketListenerFactory implements SocketListenerFactor
                 'backlog' => $options->backlog,
             ],
         ]);
-        $uri = sprintf('tcp://%s:%d', $options->host, $options->port);
+        $host = $options->host;
+        if (str_contains($host, ':') && !str_starts_with($host, '[')) {
+            $host = '[' . $host . ']';
+        }
+        $uri = sprintf('tcp://%s:%d', $host, $options->port);
         $server = @stream_socket_server(
             $uri,
             $errno,

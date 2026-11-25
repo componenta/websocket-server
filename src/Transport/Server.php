@@ -77,6 +77,10 @@ final class Server implements WebSocketServerInterface
 
     public function stop(): void
     {
+        if (!$this->running) {
+            return;
+        }
+
         $this->running = false;
         $this->loop->stop();
     }
