@@ -92,4 +92,29 @@ describe('WebSocket handshake', function () {
         expect($response->accepted)->toBeFalse()
             ->and($response->status)->toBe(403);
     });
+
+    it('rejects upgrade requests with unsupported HTTP message framing', function (string $extra, string $body) {
+        $request = webSocketHandshakeRequest();
+        $request = substr($request, 0, -2) . $extra . "\r\n" . $body;
+
+        $response = (new Handshake(new WebSocketOptions()))->accept($request);
+
+        expect($response->accepted)->toBeFalse()
+            ->and($response->status)->toBe(400);
+    })->with([
+        'nonempty HTTP body' => ["Content-Length: 3\r\n", 'abc'],
+        'body declared without body bytes' => ["Content-Length: 3\r\n", ''],
+        'transfer encoding' => ["Transfer-Encoding: chunked\r\n", "0\r\n\r\n"],
+        'ambiguous framing' => ["Content-Length: 0\r\nTransfer-Encoding: chunked\r\n", ''],
+        'malformed content length' => ["Content-Length: +0\r\n", ''],
+        'duplicate content length' => ["Content-Length: 0\r\nContent-Length: 0\r\n", ''],
+        'early bytes' => ['', "\x81\x80mask"],
+    ]);
+
+    it('accepts an explicitly empty HTTP request body', function () {
+        $request = substr(webSocketHandshakeRequest(), 0, -2) . "Content-Length: 0\r\n\r\n";
+
+        expect((new Handshake(new WebSocketOptions()))->accept($request)->accepted)->toBeTrue();
+    });
+
 });

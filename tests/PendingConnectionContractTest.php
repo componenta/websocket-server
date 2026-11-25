@@ -107,4 +107,16 @@ describe('WebSocket pending connection contract', function () {
             ->and($pending->needsWrite)->toBeFalse()
             ->and($socket->written)->toBe('HTTP/1.1 101 Switching Protocols');
     });
+
+    it('does not allow cloning an owner of a pending response queue', function () {
+        $socket = new PendingConnectionWriteSocket();
+        $pending = new PendingConnection($socket, 0.0);
+        $pending->queueResponse('response');
+
+        expect(fn () => clone $pending)->toThrow(Error::class)
+            ->and($pending->flush())->toBeTrue()
+            ->and($socket->written)->toBe('response')
+            ->and($pending->needsWrite)->toBeFalse();
+    });
+
 });

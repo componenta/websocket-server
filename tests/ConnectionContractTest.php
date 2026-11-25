@@ -439,4 +439,19 @@ describe('WebSocket connection contract', function () {
             ->and($b->sendText('')->accepted)->toBeFalse();
         $b->markClosed();
     });
+
+    it('does not allow duplicating the ownership of an active transport connection', function () {
+        $connection = contractTestConnection();
+        try {
+            $connection->sendText('hello');
+
+            expect(fn () => clone $connection)->toThrow(Error::class)
+                ->and($connection->queuedBytes)->toBe(7)
+                ->and($connection->flush())->toBeTrue()
+                ->and($connection->queuedBytes)->toBe(0);
+        } finally {
+            $connection->socket->close();
+        }
+    });
+
 });
