@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Componenta\WebSocket\Transport;
 
 use Componenta\WebSocket\Exception\ProtocolException;
-use Psr\Clock\ClockInterface;
+use Componenta\WebSocket\Loop\MonotonicClockInterface;
 use Componenta\WebSocket\Application\Error\WebSocketErrorContextFactoryInterface;
 use Componenta\WebSocket\Application\Error\WebSocketErrorPhase;
 use Componenta\WebSocket\Application\WebSocketApplicationInterface;
@@ -58,7 +58,7 @@ final class Server implements WebSocketServerInterface
         private readonly PendingConnectionFactoryInterface $pendingConnections,
         private readonly WebSocketApplicationInvokerInterface $applications,
         private readonly WebSocketErrorContextFactoryInterface $errors,
-        private readonly ClockInterface $clock,
+        private readonly MonotonicClockInterface $clock,
     ) {}
 
     public function run(WebSocketApplicationInterface $application): void
@@ -401,7 +401,7 @@ final class Server implements WebSocketServerInterface
         array &$pendingResponses,
     ): void
     {
-        $now = $this->clock->now();
+        $now = $this->clock->nowMilliseconds();
 
         foreach ($pending as $id => $connection) {
             if (!$connection->expired($now, $this->options->pendingHandshakeTimeoutMs)) {
@@ -439,7 +439,7 @@ final class Server implements WebSocketServerInterface
         }
 
         try {
-            if ($connection->expired($this->clock->now(), $this->options->pendingHandshakeTimeoutMs)) {
+            if ($connection->expired($this->clock->nowMilliseconds(), $this->options->pendingHandshakeTimeoutMs)) {
                 $this->removePending($id, $pending, $pendingWatchers, $pendingWriteWatchers, $pendingResponses, closeSocket: true);
                 return;
             }
@@ -455,7 +455,7 @@ final class Server implements WebSocketServerInterface
                 return;
             }
 
-            $connection->append($read->bytes, $this->clock->now());
+            $connection->append($read->bytes);
 
             if ($connection->tooLarge($this->options->maxPendingHandshakeBytes)) {
                 $this->queuePendingResponse(
@@ -621,7 +621,7 @@ final class Server implements WebSocketServerInterface
         }
 
         try {
-            if ($connection->expired($this->clock->now(), $this->options->pendingHandshakeTimeoutMs)) {
+            if ($connection->expired($this->clock->nowMilliseconds(), $this->options->pendingHandshakeTimeoutMs)) {
                 $this->removePending($id, $pending, $pendingWatchers, $pendingWriteWatchers, $pendingResponses, closeSocket: true);
                 return;
             }
@@ -1129,7 +1129,7 @@ final class Server implements WebSocketServerInterface
         array &$writeWatchers,
         WebSocketApplicationInterface $application,
     ): void {
-        $deadline = hrtime(true) / 1_000_000 + $this->options->shutdownDrainTimeoutMs;
+        $deadline = $this->clock->nowMilliseconds() + $this->options->shutdownDrainTimeoutMs;
 
         foreach ($connections as $connection) {
             try {
@@ -1151,11 +1151,11 @@ final class Server implements WebSocketServerInterface
             }
         }
 
-        while ($connections !== [] && hrtime(true) / 1_000_000 < $deadline) {
+        while ($connections !== [] && $this->clock->nowMilliseconds() < $deadline) {
             $progress = false;
 
             foreach ($connections as $connection) {
-                if (hrtime(true) / 1_000_000 >= $deadline) {
+                if ($this->clock->nowMilliseconds() >= $deadline) {
                     break;
                 }
 
@@ -1197,7 +1197,7 @@ final class Server implements WebSocketServerInterface
             }
 
             if (!$progress && $connections !== []) {
-                $remainingUsec = (int) (($deadline - hrtime(true) / 1_000_000) * 1000);
+                $remainingUsec = (int) (($deadline - $this->clock->nowMilliseconds()) * 1000);
                 if ($remainingUsec > 0) {
                     usleep(min(1000, $remainingUsec));
                 }
@@ -1356,6 +1356,6 @@ final class Server implements WebSocketServerInterface
 
     private function nowMs(): float
     {
-        return (float) $this->clock->now()->format('U.u') * 1000;
+        return $this->clock->nowMilliseconds();
     }
 }

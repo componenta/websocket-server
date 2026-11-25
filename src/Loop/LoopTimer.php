@@ -10,7 +10,7 @@ final class LoopTimer implements LoopTimerInterface
 
     public function __construct(
         public private(set) readonly int|string $id,
-        public private(set) readonly float $dueAt,
+        public private(set) readonly float $dueAtMs,
         private readonly mixed $callback,
         private readonly \Closure $cancel,
     ) {}

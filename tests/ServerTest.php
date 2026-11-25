@@ -32,23 +32,20 @@ use Componenta\WebSocket\Application\Error\WebSocketErrorPhase;
 use Componenta\WebSocket\Config\WebSocketOptions;
 use Componenta\WebSocket\Config\WebSocketOptionsInterface;
 use Componenta\WebSocket\Transport\WebSocketServerInterface;
-use Psr\Clock\ClockInterface;
+use Componenta\WebSocket\Loop\MonotonicClockInterface;
 use Componenta\WebSocket\Connection\Connection;
 
-final class ServerBackpressureClock implements ClockInterface
+final class ServerBackpressureClock implements MonotonicClockInterface
 {
     private int $tick = 0;
 
     public function __construct(
-        private readonly int $stepMs = 0,
+        private readonly float $stepMs = 0.1,
     ) {}
 
-    public function now(): DateTimeImmutable
+    public function nowMilliseconds(): float
     {
-        $milliseconds = $this->tick * $this->stepMs;
-        $this->tick++;
-
-        return (new DateTimeImmutable('2026-06-06 00:00:00'))->modify("+{$milliseconds} milliseconds");
+        return $this->tick++ * $this->stepMs;
     }
 }
 

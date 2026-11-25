@@ -100,7 +100,7 @@ use Componenta\WebSocket\Application\Error\WebSocketErrorContextInterface;
 use Componenta\WebSocket\Config\WebSocketOptions;
 use Componenta\WebSocket\Config\WebSocketOptionsInterface;
 use Componenta\WebSocket\Transport\WebSocketServerInterface;
-use Psr\Clock\ClockInterface;
+use Componenta\WebSocket\Loop\MonotonicClockInterface;
 use Componenta\WebSocket\Connection\Connection;
 use Componenta\WebSocket\Protocol\Frame;
 
@@ -120,11 +120,11 @@ final readonly class E2EReadyListenerFactory implements SocketListenerFactoryInt
     }
 }
 
-final readonly class E2EClock implements ClockInterface
+final readonly class E2EClock implements MonotonicClockInterface
 {
-    public function now(): DateTimeImmutable
+    public function nowMilliseconds(): float
     {
-        return new DateTimeImmutable();
+        return hrtime(true) / 1_000_000;
     }
 }
 

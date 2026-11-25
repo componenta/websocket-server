@@ -28,14 +28,14 @@ use Componenta\WebSocket\Application\Error\WebSocketErrorContextInterface;
 use Componenta\WebSocket\Config\WebSocketOptions;
 use Componenta\WebSocket\Config\WebSocketOptionsInterface;
 use Componenta\WebSocket\Transport\WebSocketServerInterface;
-use Psr\Clock\ClockInterface;
+use Componenta\WebSocket\Loop\MonotonicClockInterface;
 use Componenta\WebSocket\Connection\Connection;
 
-final readonly class ServerSoakClock implements ClockInterface
+final readonly class ServerSoakClock implements MonotonicClockInterface
 {
-    public function now(): DateTimeImmutable
+    public function nowMilliseconds(): float
     {
-        return new DateTimeImmutable('2026-06-06 00:00:00');
+        return 0.0;
     }
 }
 

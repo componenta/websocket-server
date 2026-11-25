@@ -23,15 +23,12 @@ final class PendingConnection implements PendingConnectionInterface
 
     public function __construct(
         public private(set) readonly SocketInterface $socket,
-        public private(set) readonly string $remoteAddress,
-        public private(set) readonly \DateTimeImmutable $acceptedAt,
-        public private(set) \DateTimeImmutable $lastActivityAt,
+        private readonly float $acceptedAtMs,
     ) {}
 
-    public function append(string $bytes, \DateTimeImmutable $now): void
+    public function append(string $bytes): void
     {
         $this->buffer .= $bytes;
-        $this->lastActivityAt = $now;
     }
 
     public function queueResponse(string $bytes): void
@@ -75,11 +72,9 @@ final class PendingConnection implements PendingConnectionInterface
         return strlen($this->buffer) > $maxBytes;
     }
 
-    public function expired(\DateTimeImmutable $now, int $timeoutMs): bool
+    public function expired(float $nowMs, int $timeoutMs): bool
     {
-        $elapsedMs = ((float) $now->format('U.u') - (float) $this->acceptedAt->format('U.u')) * 1000;
-
-        return $elapsedMs >= $timeoutMs;
+        return $nowMs - $this->acceptedAtMs >= $timeoutMs;
     }
 
     private function pendingOutgoingBytes(): string

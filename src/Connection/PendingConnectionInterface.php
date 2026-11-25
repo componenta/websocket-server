@@ -10,19 +10,13 @@ interface PendingConnectionInterface
 {
     public SocketInterface $socket { get; }
 
-    public string $remoteAddress { get; }
-
     public string $buffer { get; }
 
     public bool $ready { get; }
 
     public bool $needsWrite { get; }
 
-    public \DateTimeImmutable $acceptedAt { get; }
-
-    public \DateTimeImmutable $lastActivityAt { get; }
-
-    public function append(string $bytes, \DateTimeImmutable $now): void;
+    public function append(string $bytes): void;
 
     public function queueResponse(string $bytes): void;
 
@@ -31,5 +25,5 @@ interface PendingConnectionInterface
     public function tooLarge(int $maxBytes = 8192): bool;
 
     /** Whether the absolute deadline since acceptance has elapsed, irrespective of activity. */
-    public function expired(\DateTimeImmutable $now, int $timeoutMs): bool;
+    public function expired(float $nowMs, int $timeoutMs): bool;
 }

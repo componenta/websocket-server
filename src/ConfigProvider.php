@@ -39,7 +39,8 @@ use Componenta\WebSocket\Transport\Server;
 use Componenta\WebSocket\Transport\WebSocketServerInterface;
 use Componenta\Config\Config;
 use Componenta\Config\ConfigProvider as BaseConfigProvider;
-use Psr\Clock\ClockInterface;
+use Componenta\WebSocket\Loop\MonotonicClock;
+use Componenta\WebSocket\Loop\MonotonicClockInterface;
 use Psr\Container\ContainerInterface;
 
 class ConfigProvider extends BaseConfigProvider
@@ -59,12 +60,12 @@ class ConfigProvider extends BaseConfigProvider
                 ),
             PendingConnectionFactory::class => static fn(ContainerInterface $container): PendingConnectionFactory
                 => new PendingConnectionFactory(
-                    $container->get(ClockInterface::class),
+                    $container->get(MonotonicClockInterface::class),
                 ),
             SelectEventLoop::class => static fn(ContainerInterface $container): SelectEventLoop
                 => new SelectEventLoop(
                     $container->get(SocketSelectorInterface::class),
-                    $container->get(ClockInterface::class),
+                    $container->get(MonotonicClockInterface::class),
                     $container->get(WebSocketOptionsInterface::class)->selectTimeoutUsec,
                 ),
             Server::class => static fn(ContainerInterface $container): Server
@@ -77,7 +78,7 @@ class ConfigProvider extends BaseConfigProvider
                     $container->get(PendingConnectionFactoryInterface::class),
                     $container->get(WebSocketApplicationInvokerInterface::class),
                     $container->get(WebSocketErrorContextFactoryInterface::class),
-                    $container->get(ClockInterface::class),
+                    $container->get(MonotonicClockInterface::class),
                 ),
             WebSocketApplicationFactory::class => static fn(ContainerInterface $container): WebSocketApplicationFactory
                 => new WebSocketApplicationFactory(
@@ -101,6 +102,7 @@ class ConfigProvider extends BaseConfigProvider
             ConnectionFactoryInterface::class => ConnectionFactory::class,
             ConnectionRegistryInterface::class => InMemoryConnectionRegistry::class,
             EventLoopInterface::class => SelectEventLoop::class,
+            MonotonicClockInterface::class => MonotonicClock::class,
             FrameCodecInterface::class => FrameCodec::class,
             HandshakeInterface::class => Handshake::class,
             MessageAssemblerFactoryInterface::class => MessageAssemblerFactory::class,

@@ -8,7 +8,6 @@
         "componenta/arrayable": "^1.0",
         "componenta/config": "^3.0.0",
         "componenta/http": "^1.0",
-        "psr/clock": "^1.0",
         "psr/container": "^2.0"
     },
     "autoload": {

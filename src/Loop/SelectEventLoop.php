@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Componenta\WebSocket\Loop;
 
-use Psr\Clock\ClockInterface;
 use Componenta\WebSocket\Socket\SocketInterface;
 use Componenta\WebSocket\Socket\SocketListenerInterface;
 use Componenta\WebSocket\Socket\SocketSelectionInterface;
@@ -42,7 +41,7 @@ final class SelectEventLoop implements EventLoopInterface
 
     public function __construct(
         private readonly SocketSelectorInterface $selector,
-        private readonly ClockInterface $clock,
+        private readonly MonotonicClockInterface $clock,
         private readonly int $idleTimeoutUsec = 200_000,
     ) {}
 
@@ -96,7 +95,7 @@ final class SelectEventLoop implements EventLoopInterface
         $id = $this->nextId++;
         $timer = new LoopTimer(
             $id,
-            $this->now() + ($milliseconds / 1000),
+            $this->clock->nowMilliseconds() + $milliseconds,
             $callback,
             function (LoopTimer $timer): void {
                 unset($this->timers[$timer->id]);
@@ -189,10 +188,10 @@ final class SelectEventLoop implements EventLoopInterface
 
     private function runDueTimers(): void
     {
-        $now = $this->now();
+        $now = $this->clock->nowMilliseconds();
 
         foreach ($this->timers as $timer) {
-            if (!$timer->enabled || $timer->dueAt > $now) {
+            if (!$timer->enabled || $timer->dueAtMs > $now) {
                 continue;
             }
 
@@ -224,18 +223,18 @@ final class SelectEventLoop implements EventLoopInterface
             return $this->idleTimeoutUsec;
         }
 
-        $now = $this->now();
+        $now = $this->clock->nowMilliseconds();
         $dueAt = null;
 
         foreach ($this->timers as $timer) {
-            $dueAt = $dueAt === null ? $timer->dueAt : min($dueAt, $timer->dueAt);
+            $dueAt = $dueAt === null ? $timer->dueAtMs : min($dueAt, $timer->dueAtMs);
         }
 
         if ($dueAt === null) {
             return $this->idleTimeoutUsec;
         }
 
-        $timerTimeoutUsec = max(0, (int) (($dueAt - $now) * 1_000_000));
+        $timerTimeoutUsec = max(0, (int) (($dueAt - $now) * 1000));
 
         return min($this->idleTimeoutUsec, $timerTimeoutUsec);
     }
@@ -282,8 +281,4 @@ final class SelectEventLoop implements EventLoopInterface
         }
     }
 
-    private function now(): float
-    {
-        return (float) $this->clock->now()->format('U.u');
-    }
 }

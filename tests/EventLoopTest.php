@@ -11,18 +11,15 @@ use Componenta\WebSocket\Socket\SocketSelection;
 use Componenta\WebSocket\Socket\SocketSelectorInterface;
 use Componenta\WebSocket\Socket\SocketWriteResult;
 use Componenta\WebSocket\Socket\SocketWriteStatus;
-use Psr\Clock\ClockInterface;
+use Componenta\WebSocket\Loop\MonotonicClockInterface;
 
-final class EventLoopTestClock implements ClockInterface
+final class EventLoopTestClock implements MonotonicClockInterface
 {
     private int $tick = 0;
 
-    public function now(): DateTimeImmutable
+    public function nowMilliseconds(): float
     {
-        $time = DateTimeImmutable::createFromFormat('U.u', sprintf('1000.%06d', $this->tick * 1000));
-        $this->tick++;
-
-        return $time ?: new DateTimeImmutable('@1000');
+        return (float) $this->tick++;
     }
 }
 

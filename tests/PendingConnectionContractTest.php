@@ -52,23 +52,18 @@ final class PendingConnectionWriteSocket implements SocketInterface
 }
 
 describe('WebSocket pending connection contract', function () {
-    it('tracks activity time without extending the absolute handshake deadline', function () {
-        $acceptedAt = new DateTimeImmutable('2026-06-06 00:00:00.000000');
-        $lastActivityAt = new DateTimeImmutable('2026-06-06 00:00:01.000000');
+    it('does not extend the absolute handshake deadline when bytes arrive', function () {
         $pending = new PendingConnection(
             new StreamSocket(fopen('php://temp', 'r+'), '127.0.0.1:12345'),
-            '127.0.0.1:12345',
-            $acceptedAt,
-            $lastActivityAt,
+            1000.0,
         );
 
-        $pending->append('GET /ws HTTP/1.1', new DateTimeImmutable('2026-06-06 00:00:02.000000'));
+        $pending->append('GET /ws HTTP/1.1');
 
-        expect($pending->acceptedAt)->toBe($acceptedAt)
-            ->and($pending->lastActivityAt)->toEqual(new DateTimeImmutable('2026-06-06 00:00:02.000000'))
-            ->and($pending->expired(new DateTimeImmutable('2026-06-06 00:00:02.500000'), 3000))->toBeFalse()
-            ->and($pending->expired(new DateTimeImmutable('2026-06-06 00:00:03.000000'), 3000))->toBeTrue()
-            ->and($pending->expired(new DateTimeImmutable('2026-06-06 00:00:02.000000'), 1000))->toBeTrue();
+        expect($pending->buffer)->toBe('GET /ws HTTP/1.1')
+            ->and($pending->expired(3999.0, 3000))->toBeFalse()
+            ->and($pending->expired(4000.0, 3000))->toBeTrue()
+            ->and($pending->expired(2000.0, 1000))->toBeTrue();
 
         $pending->socket->close();
     });
@@ -79,8 +74,7 @@ describe('WebSocket pending connection contract', function () {
             '127.0.0.1:12345',
             new SocketWriteResult(SocketWriteStatus::BLOCKED),
         );
-        $now = new DateTimeImmutable('2026-06-06 00:00:00.000000');
-        $pending = new PendingConnection($socket, $socket->remoteAddress, $now, $now);
+        $pending = new PendingConnection($socket, 0.0);
 
         $pending->queueResponse('HTTP/1.1 101 Switching Protocols');
         $blocked = $pending->flush();
@@ -100,8 +94,7 @@ describe('WebSocket pending connection contract', function () {
             '127.0.0.1:12345',
             new SocketWriteResult(SocketWriteStatus::WRITTEN, 4),
         );
-        $now = new DateTimeImmutable('2026-06-06 00:00:00.000000');
-        $pending = new PendingConnection($socket, $socket->remoteAddress, $now, $now);
+        $pending = new PendingConnection($socket, 0.0);
 
         $pending->queueResponse('HTTP/1.1 101 Switching Protocols');
         $firstFlush = $pending->flush();
