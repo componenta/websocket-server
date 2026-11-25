@@ -276,6 +276,8 @@ final readonly class ServerBackpressureListenerFactory implements SocketListener
 
 final class ServerQueueSelector implements SocketSelectorInterface
 {
+    public function assertSelectable(SocketInterface|SocketListenerInterface $target): void {}
+
     public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection
     {
         $readableListeners = [];
@@ -304,6 +306,8 @@ final class ServerQueueSelector implements SocketSelectorInterface
 
 final readonly class ServerFailingSelector implements SocketSelectorInterface
 {
+    public function assertSelectable(SocketInterface|SocketListenerInterface $target): void {}
+
     public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection
     {
         throw new RuntimeException('select failed');
@@ -312,6 +316,8 @@ final readonly class ServerFailingSelector implements SocketSelectorInterface
 
 final class ServerBackpressureSelector implements SocketSelectorInterface
 {
+    public function assertSelectable(SocketInterface|SocketListenerInterface $target): void {}
+
     private int $calls = 0;
 
     public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection

@@ -63,6 +63,8 @@ final class EventLoopTestListener implements SocketListenerInterface
 
 final class EventLoopTestSelector implements SocketSelectorInterface
 {
+    public function assertSelectable(SocketInterface|SocketListenerInterface $target): void {}
+
     public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection
     {
         $readableListeners = [];
@@ -164,6 +166,8 @@ describe('WebSocket event loop', function () {
 
     it('polls without waiting when a callback defers more work', function () {
         $selector = new class implements SocketSelectorInterface {
+    public function assertSelectable(SocketInterface|SocketListenerInterface $target): void {}
+
             public array $timeouts = [];
 
             public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection

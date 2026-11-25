@@ -6,6 +6,24 @@ namespace Componenta\WebSocket\Socket;
 
 final readonly class StreamSocketSelector implements SocketSelectorInterface
 {
+    public function assertSelectable(SocketInterface|SocketListenerInterface $target): void
+    {
+        if (!$target instanceof StreamSocketInterface && !$target instanceof StreamSocketListenerInterface) {
+            throw new \InvalidArgumentException('Stream socket selector requires a stream resource target.');
+        }
+
+        if (!is_resource($target->resource)) {
+            throw new \InvalidArgumentException('Cannot select a closed stream resource.');
+        }
+
+        $read = [$target->resource];
+        $write = [];
+        // An interrupted probe is not a successful admission check.
+        if (!$this->poll($read, $write, 0)) {
+            throw new \RuntimeException('Socket admission check was interrupted.');
+        }
+    }
+
     public function select(
         iterable $listeners,
         iterable $read,
@@ -49,11 +67,16 @@ final readonly class StreamSocketSelector implements SocketSelectorInterface
             $writeSockets[(int) $socket->resource] = $socket;
         }
 
-        $except = null;
-        $changed = @stream_select($readResources, $writeResources, $except, 0, $timeoutUsec);
+        if ($timeoutUsec < 0) {
+            throw new \InvalidArgumentException('Select timeout must not be negative.');
+        }
 
-        if ($changed === false) {
-            throw new \RuntimeException('Unable to select WebSocket sockets.');
+        if ($readResources === [] && $writeResources === []) {
+            return new SocketSelection([], [], []);
+        }
+
+        if (!$this->poll($readResources, $writeResources, $timeoutUsec)) {
+            return new SocketSelection([], [], []);
         }
 
         $readableListeners = [];
@@ -82,5 +105,41 @@ final readonly class StreamSocketSelector implements SocketSelectorInterface
         }
 
         return new SocketSelection($readableListeners, $readable, $writable);
+    }
+
+    /**
+     * @param array<resource> $read
+     * @param array<resource> $write
+     */
+    private function poll(array &$read, array &$write, int $timeoutUsec): bool
+    {
+        $warning = null;
+        $except = null;
+
+        set_error_handler(static function (int $level, string $message) use (&$warning): bool {
+            $warning = $message;
+            return true;
+        }, E_WARNING);
+        try {
+            $changed = stream_select(
+                $read, $write, $except,
+                intdiv($timeoutUsec, 1_000_000),
+                $timeoutUsec % 1_000_000,
+            );
+        } finally {
+            restore_error_handler();
+        }
+
+        if ($changed === false) {
+            if ($warning !== null && (str_contains(strtolower($warning), 'interrupted system call')
+                || preg_match('/Unable to select \[(?:4|10004)\]/i', $warning) === 1)
+            ) {
+                return false;
+            }
+
+            throw new \RuntimeException('Unable to select WebSocket sockets.' . ($warning === null ? '' : ' ' . $warning));
+        }
+
+        return true;
     }
 }

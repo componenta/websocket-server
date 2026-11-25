@@ -48,6 +48,9 @@ final class SelectEventLoop implements EventLoopInterface
     public function onReadable(SocketInterface|SocketListenerInterface $socket, callable $callback): LoopWatcherInterface
     {
         if ($socket instanceof SocketListenerInterface) {
+            if (($this->listenerTargets[$socket->id] ?? null) !== $socket) {
+                $this->selector->assertSelectable($socket);
+            }
             ($this->readableListeners[$socket->id] ?? null)?->cancel();
             $watcher = $this->createWatcher($callback, function (LoopWatcher $watcher) use ($socket): void {
                 if (($this->readableListeners[$socket->id] ?? null) === $watcher) {
@@ -60,6 +63,11 @@ final class SelectEventLoop implements EventLoopInterface
             return $watcher;
         }
 
+        if (($this->readTargets[$socket->id] ?? null) !== $socket
+            && ($this->writeTargets[$socket->id] ?? null) !== $socket
+        ) {
+            $this->selector->assertSelectable($socket);
+        }
         ($this->readableSockets[$socket->id] ?? null)?->cancel();
         $watcher = $this->createWatcher($callback, function (LoopWatcher $watcher) use ($socket): void {
             if (($this->readableSockets[$socket->id] ?? null) === $watcher) {
@@ -74,6 +82,11 @@ final class SelectEventLoop implements EventLoopInterface
 
     public function onWritable(SocketInterface $socket, callable $callback): LoopWatcherInterface
     {
+        if (($this->readTargets[$socket->id] ?? null) !== $socket
+            && ($this->writeTargets[$socket->id] ?? null) !== $socket
+        ) {
+            $this->selector->assertSelectable($socket);
+        }
         ($this->writableSockets[$socket->id] ?? null)?->cancel();
         $watcher = $this->createWatcher($callback, function (LoopWatcher $watcher) use ($socket): void {
             if (($this->writableSockets[$socket->id] ?? null) === $watcher) {
@@ -148,7 +161,9 @@ final class SelectEventLoop implements EventLoopInterface
                     $timeoutUsec,
                 );
 
-                $this->dispatchSelection($selection);
+                if ($this->running) {
+                    $this->dispatchSelection($selection);
+                }
             }
         } finally {
             $this->running = false;

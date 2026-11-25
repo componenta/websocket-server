@@ -127,4 +127,25 @@ describe('WebSocket stream socket selector', function () {
             $listener->close();
         }
     });
+
+    it('returns an empty selection without polling an empty descriptor set', function () {
+        $selection = (new StreamSocketSelector())->select([], [], [], 0);
+
+        expect($selection->readable)->toBe([])
+            ->and($selection->writable)->toBe([])
+            ->and($selection->readableListeners)->toBe([]);
+    });
+
+    it('rejects a closed stream before registration', function () {
+        $resources = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        expect($resources)->not->toBeFalse();
+        $socket = new ContractBackedStreamSocket($resources[0], 'local');
+        $socket->close();
+        try {
+            expect(fn () => (new StreamSocketSelector())->assertSelectable($socket))
+                ->toThrow(InvalidArgumentException::class);
+        } finally {
+            fclose($resources[1]);
+        }
+    });
 });

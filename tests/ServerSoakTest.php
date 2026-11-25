@@ -119,6 +119,8 @@ final readonly class ServerSoakListenerFactory implements SocketListenerFactoryI
 
 final class ServerSoakSelector implements SocketSelectorInterface
 {
+    public function assertSelectable(SocketInterface|SocketListenerInterface $target): void {}
+
     public function select(iterable $listeners, iterable $read, iterable $write, int $timeoutUsec): SocketSelection
     {
         $readableListeners = [];

@@ -358,34 +358,43 @@ final class Server implements WebSocketServerInterface
                     continue;
                 }
 
-                $connection = $this->pendingConnections->create($socket);
-                $pending[$socket->id] = $connection;
-                $pendingWatchers[$socket->id] = $this->loop->onReadable(
-                    $socket,
-                    function () use (
+                try {
+                    $connection = $this->pendingConnections->create($socket);
+                    $pending[$socket->id] = $connection;
+                    $pendingWatchers[$socket->id] = $this->loop->onReadable(
                         $socket,
-                        &$pending,
-                        &$connections,
-                        &$pendingWatchers,
-                        &$pendingWriteWatchers,
-                        &$pendingResponses,
-                        &$readWatchers,
-                        &$writeWatchers,
-                        $application,
-                    ): void {
-                        $this->processPending(
-                            $socket->id,
-                            $pending,
-                            $connections,
-                            $pendingWatchers,
-                            $pendingWriteWatchers,
-                            $pendingResponses,
-                            $readWatchers,
-                            $writeWatchers,
+                        function () use (
+                            $socket,
+                            &$pending,
+                            &$connections,
+                            &$pendingWatchers,
+                            &$pendingWriteWatchers,
+                            &$pendingResponses,
+                            &$readWatchers,
+                            &$writeWatchers,
                             $application,
-                        );
-                    },
-                );
+                        ): void {
+                            $this->processPending(
+                                $socket->id,
+                                $pending,
+                                $connections,
+                                $pendingWatchers,
+                                $pendingWriteWatchers,
+                                $pendingResponses,
+                                $readWatchers,
+                                $writeWatchers,
+                                $application,
+                            );
+                        },
+                    );
+                } catch (\Throwable $e) {
+                    if (isset($pending[$socket->id])) {
+                        $this->removePending($socket->id, $pending, $pendingWatchers, $pendingWriteWatchers, $pendingResponses, closeSocket: true);
+                    } else {
+                        $socket->close();
+                    }
+                    $this->fail($application, WebSocketErrorPhase::ACCEPT, null, $e);
+                }
             }
         } catch (\Throwable $e) {
             $this->fail($application, WebSocketErrorPhase::ACCEPT, null, $e);
